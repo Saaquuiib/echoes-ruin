@@ -122,11 +122,47 @@
     smat.specularColor = new BABYLON.Color3(0, 0, 0);
     smat.alpha = 0.35; shadow.material = smat;
 
+    // World objects
+    const ladders = [];
+    const shrines = [];
+    const respawnKey = 'eotr_respawn';
+    let respawn = JSON.parse(localStorage.getItem(respawnKey) || 'null');
+    if (respawn) {
+      placeholder.position.x = respawn.x;
+      placeholder.position.y = respawn.y;
+    } else {
+      respawn = { x: placeholder.position.x, y: placeholder.position.y };
+    }
+    function createLadder(x, y0, y1, width = 0.5) {
+      const h = y1 - y0;
+      const mesh = BABYLON.MeshBuilder.CreateBox('ladder', { width, height: h, depth: 0.2 }, scene);
+      mesh.position.set(x, y0 + h * 0.5, 0);
+      mesh.isVisible = false;
+      ladders.push({ x, y0, y1, width, mesh });
+      return ladders[ladders.length - 1];
+    }
+    function spawnShrine(x, y) {
+      const mesh = BABYLON.MeshBuilder.CreateCylinder('shrine', { height: 1.5, diameter: 0.5 }, scene);
+      mesh.position.set(x, y + 0.75, 0);
+      const mat = new BABYLON.StandardMaterial('shrineMat', scene);
+      mat.emissiveColor = new BABYLON.Color3(0.7, 0.7, 1.0);
+      mesh.material = mat;
+      shrines.push({ x, y, mesh });
+      return shrines[shrines.length - 1];
+    }
+    function activateShrine(s) {
+      setHP(stats.hpMax);
+      setST(stats.stamMax);
+      setFlasks(stats.flaskMax);
+      respawn = { x: s.x, y: placeholder.position.y };
+      localStorage.setItem(respawnKey, JSON.stringify(respawn));
+    }
+
     // === INPUTS ===
     const Keys = {
       left: false, right: false, jump: false, roll: false,
-      light: false, heavy: false, flask: false,
-      runHold: false,
+      light: false, heavy: false, flask: false, interact: false,
+      runHold: false, up: false, down: false,
       debugHurt: false, debugDie: false
     };
 
@@ -139,6 +175,9 @@
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
         'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
+        'KeyE': 'interact',
+        'KeyW': 'up', 'ArrowUp': 'up',
+        'KeyS': 'down', 'ArrowDown': 'down',
         'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
         'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
         'KeyH': 'debugHurt', 'KeyX': 'debugDie'
@@ -148,6 +187,9 @@
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
       'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
+      'KeyE': 'interact',
+      'KeyW': 'up', 'ArrowUp': 'up',
+      'KeyS': 'down', 'ArrowDown': 'down',
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
     };
@@ -196,11 +238,11 @@
       hpMax: 100, hp: 100,
       stamMax: 100, stam: 100, stamRegenPerSec: 22,
       walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
-      jumpVel: 8, gravity: -20,
+      jumpVel: 8, gravity: -20, climbSpeed: 2.5,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
-      flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0
+      flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
     };
     const state = {
       onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity,
@@ -210,16 +252,21 @@
       // New
       blocking: false,
       parryOpen: false,
-      parryUntil: 0
+      parryUntil: 0,
+      climbing: false
     };
 
     // === HUD refs ===
     const hpFill = document.querySelector('#hp .fill');
     const stFill = document.querySelector('#stamina .fill');
     const flaskPips = [...document.querySelectorAll('#flasks .pip')];
+    const promptEl = document.getElementById('prompt');
+    const fadeEl = document.getElementById('fade');
+    function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
+    function hidePrompt() { promptEl.style.display = 'none'; }
     function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
     function setST(v) { stats.stam = Math.max(0, Math.min(stats.stamMax, v)); stFill.style.width = (stats.stam / stats.stamMax * 100) + '%'; }
-    function setFlasks(n) { stats.flaskCount = n; flaskPips.forEach((p, i) => p.classList.toggle('used', i >= n)); }
+    function setFlasks(n) { stats.flaskCount = Math.max(0, Math.min(stats.flaskMax, n)); flaskPips.forEach((p, i) => p.classList.toggle('used', i >= stats.flaskCount)); }
     setHP(stats.hp); setST(stats.stam); setFlasks(stats.flaskCount);
 
     // === Sprite sheets ===
@@ -353,10 +400,10 @@
       const b  = await createManagerAuto('block'); if (b.ok)  playerSprite.mgr.block = b.mgr;
       const p  = await createManagerAuto('parry'); if (p.ok)  playerSprite.mgr.parry = p.mgr;
 
-      // Create sprite with FEET on ground
+      // Create sprite aligned with placeholder
       const sp = new BABYLON.Sprite('playerSprite', playerSprite.mgr.idle);
       sp.size = playerSprite.sizeUnits;
-      sp.position = new BABYLON.Vector3(0, feetCenterY(), 0);
+      sp.position = new BABYLON.Vector3(placeholder.position.x, placeholder.position.y, 0);
       sp.playAnimation(0, SHEETS.idle.frames - 1, true, 1000 / SHEETS.idle.fps);
       playerSprite.sprite = sp;
 
@@ -367,6 +414,8 @@
       placeholder.setEnabled(false);
     }
       initPlayerSprite();
+      createLadder(2, 0, 4);
+      spawnShrine(-2, 0);
 
       // === Enemies ===
       const enemies = [];
@@ -653,10 +702,29 @@
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
 
+    function startRespawn() {
+      fadeEl.classList.add('show');
+      setTimeout(() => {
+        placeholder.position.x = respawn.x;
+        placeholder.position.y = respawn.y;
+        state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
+        setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
+        state.dead = false; state.acting = false;
+        setAnim('idle', true);
+        playerSprite.sprite.position.x = placeholder.position.x;
+        playerSprite.sprite.position.y = placeholder.position.y;
+        fadeEl.classList.remove('show');
+      }, 600);
+    }
+
     // === OVERLAY ===
     let showColliders = false;
     let slowMo = false;
-    function toggleColliders() { showColliders = !showColliders; console.log('Collider meshes', showColliders ? 'ON' : 'OFF'); }
+    function toggleColliders() {
+      showColliders = !showColliders;
+      ladders.forEach(l => { if (l.mesh) l.mesh.isVisible = showColliders; });
+      console.log('Collider meshes', showColliders ? 'ON' : 'OFF');
+    }
     function toggleSlowMo() { slowMo = !slowMo; console.log('Slow-mo', slowMo ? 'ON' : 'OFF'); }
     const overlayEl = document.getElementById('overlay');
     let overlayShow = false;
@@ -669,11 +737,11 @@
         `FPS:${engine.getFps().toFixed(0)}  Cam:ORTHO h=${ORTHO_VIEW_HEIGHT}\n` +
         `Anim:${playerSprite.state} loop:${playerSprite.loop}  size:${playerSprite.sizeUnits?.toFixed(2)} base:${playerSprite.baselineUnits?.toFixed(3)}\n` +
         `Y:${playerSprite.sprite?.position.y.toFixed(2)} FeetCenter:${feetCenterY().toFixed(2)} Ground:0 Air:${!state.onGround}\n` +
-        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}\n` +
+        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
+        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
@@ -682,21 +750,52 @@
       const dt = rawDt * (slowMo ? 0.25 : 1);
       const now = performance.now();
 
+      // Ladder detection
+      const ladder = ladders.find(l =>
+        placeholder.position.x > l.x - l.width * 0.5 &&
+        placeholder.position.x < l.x + l.width * 0.5 &&
+        placeholder.position.y >= l.y0 &&
+        placeholder.position.y <= l.y1);
+      if (ladder) {
+        state.climbing = true;
+        placeholder.position.x = ladder.x;
+      } else if (state.climbing) {
+        state.climbing = false;
+      }
+
+      // Shrine proximity & prompt
+      let shrineTarget = null;
+      const footY = placeholder.position.y - feetCenterY();
+      for (const s of shrines) {
+        if (Math.abs(placeholder.position.x - s.x) < 1 && Math.abs(footY - s.y) < 1) {
+          shrineTarget = s; break;
+        }
+      }
+      if (shrineTarget) showPrompt('[E] Rest'); else hidePrompt();
+      if (shrineTarget && Keys.interact) { activateShrine(shrineTarget); Keys.interact = false; }
+
       // Inputs → intentions
       if (!state.acting && !state.dead) {
         const want = (Keys.left ? -1 : 0) + (Keys.right ? 1 : 0);
         if (want !== 0) state.facing = want;
 
-        const speedMax = Keys.runHold ? stats.runMax : stats.walkMax;
-        const target = want * speedMax;
-        const a = (Math.abs(target) > Math.abs(state.vx)) ? stats.accel : stats.decel;
-        if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
-        else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
+        if (state.climbing) {
+          state.vx = 0;
+          const climb = (Keys.up ? stats.climbSpeed : 0) + (Keys.down ? -stats.climbSpeed : 0);
+          state.vy = climb;
+          if (Keys.jump) { state.climbing = false; state.vy = stats.jumpVel; state.onGround = false; Keys.jump = false; }
+        } else {
+          const speedMax = Keys.runHold ? stats.runMax : stats.walkMax;
+          const target = want * speedMax;
+          const a = (Math.abs(target) > Math.abs(state.vx)) ? stats.accel : stats.decel;
+          if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
+          else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
 
-        const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
-        const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        if (buffered && (state.onGround || canCoyote)) {
-          state.vy = stats.jumpVel; state.onGround = false; state.jumpBufferedAt = 0;
+          const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
+          const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+          if (buffered && (state.onGround || canCoyote)) {
+            state.vy = stats.jumpVel; state.onGround = false; state.jumpBufferedAt = 0;
+          }
         }
       } else {
         // damp movement during actions
@@ -737,16 +836,22 @@
       }
       // Handle generic action end (hurt, heavy, parry, death)
       if (state.acting && actionEndAt && now >= actionEndAt) {
-        if (!state.dead) state.acting = false;
+        if (state.dead) startRespawn();
+        else state.acting = false;
         actionEndAt = 0;
         state.parryOpen = false; // ensure parry window is closed
       }
 
       // Physics (drive placeholder)
       if (!state.dead) {
-        state.vy += stats.gravity * dt;
-        placeholder.position.x += state.vx * dt;
-        placeholder.position.y += state.vy * dt;
+        if (state.climbing) {
+          placeholder.position.x += state.vx * dt;
+          placeholder.position.y += state.vy * dt;
+        } else {
+          state.vy += stats.gravity * dt;
+          placeholder.position.x += state.vx * dt;
+          placeholder.position.y += state.vy * dt;
+        }
       }
 
       // Ground clamp (feet at y=0 => center at feetCenterY)

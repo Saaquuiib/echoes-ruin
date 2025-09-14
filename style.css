@@ -15,6 +15,7 @@ html, body { height:100%; margin:0; background:#000; }
 #flasks { display:flex; gap:6px; margin-top:6px; }
 .pip { width:10px; height:10px; border:1px solid #C1B158; }
 .pip.used { background:#5a5337; border-color:#5a5337; }
+#prompt { margin-top:6px; }
 
 /* Overlay + key hint */
 #overlay {
@@ -22,6 +23,12 @@ html, body { height:100%; margin:0; background:#000; }
   background:rgba(0,0,0,.55); color:#E3D7B7; font:12px monospace;
   border:1px solid #333; display:none; white-space:pre; user-select:none; z-index:9999;
 }
+#fade {
+  position:fixed; left:0; top:0; width:100vw; height:100vh;
+  background:#000; opacity:0; pointer-events:none;
+  transition:opacity 0.5s; z-index:10000;
+}
+#fade.show { opacity:1; }
 .badge {
   position: fixed; right: 12px; top: 12px; background: rgba(0,0,0,.55);
   border: 1px solid #333; color:#E3D7B7; padding:6px 8px; font:12px monospace; z-index:1000;
