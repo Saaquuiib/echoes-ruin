@@ -135,11 +135,11 @@
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
-      'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask', 'F9': 'overlay',
-      'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
-      'KeyH': 'debugHurt', 'KeyX': 'debugDie'
-    };
-    const KeyMapUp = {
+        'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask', 'F9': 'overlay', 'F10': 'enemyDbg',
+        'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
+        'KeyH': 'debugHurt', 'KeyX': 'debugDie'
+      };
+      const KeyMapUp = {
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
@@ -162,8 +162,10 @@
         return;
       }
       const k = KeyMapDown[e.code]; if (!k) return;
-      if (k === 'overlay') toggleOverlay(); else Keys[k] = true;
-    });
+        if (k === 'overlay') toggleOverlay();
+        else if (k === 'enemyDbg') toggleEnemyDebug();
+        else Keys[k] = true;
+      });
 
     window.addEventListener('keyup', e => {
       if (e.code === 'KeyI') {
@@ -355,9 +357,202 @@
 
       placeholder.setEnabled(false);
     }
-    initPlayerSprite();
+      initPlayerSprite();
 
-    // === Actions ===
+      // === Enemies ===
+      const enemies = [];
+      let enemyDbg = false;
+      function toggleEnemyDebug() {
+        enemyDbg = !enemyDbg;
+        enemies.forEach(e => {
+          if (e.debugMesh) e.debugMesh.isVisible = enemyDbg;
+          if (e.debugLabel) e.debugLabel.mesh.isVisible = enemyDbg;
+        });
+      }
+
+      function centerFromFoot(e, footY) {
+        return footY + (e.sizeUnits * 0.5) - e.baselineUnits;
+      }
+
+      async function loadEnemySheet(e, name, url, fps, loop, computeBaseline) {
+        const { ok, img, w: sheetW, h: sheetH } = await loadImage(url);
+        if (!ok) return;
+        const frames = Math.max(1, Math.round(sheetW / sheetH));
+        const frameW = Math.floor(sheetW / frames);
+        const frameH = sheetH;
+        if (computeBaseline) {
+          const baselinePx = await detectBaselinePx(img, sheetW, sheetH, frames, frameW, frameH);
+          e.baselineUnits = baselinePx / PPU;
+        }
+        e.sizeUnits = frameH / PPU;
+        const mgr = new BABYLON.SpriteManager(`${e.type}_${name}`, url, 1, { width: frameW, height: frameH }, scene);
+        mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+        mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        e.mgr[name] = { mgr, frames, fps, loop };
+      }
+
+      function setEnemyAnim(e, name) {
+        const meta = e.mgr[name];
+        if (!meta) return;
+        if (e.anim === name && e.sprite) return;
+        const pos = e.sprite ? e.sprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
+        if (e.sprite) e.sprite.dispose();
+        const sp = new BABYLON.Sprite(`${e.type}_${name}`, meta.mgr);
+        sp.size = e.sizeUnits;
+        sp.position = pos;
+        sp.invertU = (e.facing < 0);
+        sp.playAnimation(0, meta.frames - 1, meta.loop, 1000 / meta.fps);
+        e.sprite = sp;
+        e.anim = name;
+        e.animStart = performance.now();
+        e.animDur = (meta.frames / meta.fps) * 1000;
+      }
+
+      async function spawnWolf(x, footY, minX, maxX) {
+        const e = { type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
+          onGround: true, anim: '', patrolMin: minX, patrolMax: maxX, dir: 1,
+          gravity: -20, jumpVel: 6, jumpCd: 1, baselineUnits: 0, sizeUnits: 1 };
+        await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
+        await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
+        await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
+        await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
+        e.y = centerFromFoot(e, footY);
+        setEnemyAnim(e, 'run');
+        const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
+        const mat = new BABYLON.StandardMaterial('dbgMatWolf', scene);
+        mat.wireframe = true; mat.emissiveColor = new BABYLON.Color3(1, 0, 0);
+        box.material = mat; box.isVisible = enemyDbg; box.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 128, height: 32 }, scene, false);
+        dt.hasAlpha = true;
+        const lmat = new BABYLON.StandardMaterial('lblMatWolf', scene);
+        lmat.diffuseTexture = dt; lmat.emissiveColor = new BABYLON.Color3(1, 1, 0); lmat.backFaceCulling = false;
+        const plane = BABYLON.MeshBuilder.CreatePlane(`lbl_${e.type}`, { size: 1.5 }, scene);
+        plane.material = lmat; plane.isVisible = enemyDbg; plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx: dt.getContext() };
+        enemies.push(e);
+      }
+
+      async function spawnBat(x, footY, minX, maxX) {
+        const e = { type: 'bat', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
+          anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
+          hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0 };
+        await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
+        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false);
+        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true);
+        e.y = centerFromFoot(e, footY);
+        setEnemyAnim(e, 'sleep');
+        const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
+        const mat = new BABYLON.StandardMaterial('dbgMatBat', scene);
+        mat.wireframe = true; mat.emissiveColor = new BABYLON.Color3(0, 1, 0);
+        box.material = mat; box.isVisible = enemyDbg; box.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 128, height: 32 }, scene, false);
+        dt.hasAlpha = true;
+        const lmat = new BABYLON.StandardMaterial('lblMatBat', scene);
+        lmat.diffuseTexture = dt; lmat.emissiveColor = new BABYLON.Color3(1, 1, 0); lmat.backFaceCulling = false;
+        const plane = BABYLON.MeshBuilder.CreatePlane(`lbl_${e.type}`, { size: 1.5 }, scene);
+        plane.material = lmat; plane.isVisible = enemyDbg; plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx: dt.getContext() };
+        enemies.push(e);
+      }
+
+      function updateWolf(e, dt) {
+        const playerX = playerSprite.sprite?.position.x ?? 0;
+        const chaseRange = 5;
+        const stopRange = 0.6; // keep some distance from the player
+        const dx = playerX - e.x;
+        if (Math.abs(dx) < chaseRange) {
+          if (Math.abs(dx) > stopRange) {
+            e.dir = (dx < 0) ? -1 : 1;
+            e.vx = e.dir * 2.3;
+          } else {
+            e.vx = 0; // close enough – don't jitter on top of the player
+          }
+        } else {
+          if (e.x < e.patrolMin) e.dir = 1;
+          if (e.x > e.patrolMax) e.dir = -1;
+          e.vx = e.dir * 2.3;
+        }
+        if (e.vx !== 0) e.facing = e.dir;
+        if (e.onGround) {
+          e.jumpCd -= dt;
+          if (e.jumpCd <= 0) { e.vy = e.jumpVel; e.onGround = false; e.jumpCd = 2 + Math.random() * 2; }
+        } else {
+          e.vy += e.gravity * dt;
+        }
+        e.x += e.vx * dt;
+        e.y += e.vy * dt;
+        const ground = centerFromFoot(e, 0);
+        if (e.y <= ground) { e.y = ground; e.vy = 0; e.onGround = true; }
+        if (!e.onGround) {
+          if (e.vy > 0.2) setEnemyAnim(e, 'jumpUp');
+          else if (e.vy < -0.2) setEnemyAnim(e, 'jumpDown');
+          else setEnemyAnim(e, 'jumpMid');
+        } else {
+          setEnemyAnim(e, 'run');
+        }
+        if (e.sprite) {
+          e.sprite.position.x = e.x;
+          e.sprite.position.y = e.y;
+          e.sprite.invertU = (e.facing < 0);
+        }
+      }
+
+      function updateBat(e, dt) {
+        const playerX = playerSprite.sprite?.position.x ?? 0;
+        const dist = Math.abs(playerX - e.x);
+        if (e.state === 'sleep' && dist < 4) { e.state = 'wake'; setEnemyAnim(e, 'wake'); }
+        if (e.state === 'wake' && performance.now() > e.animStart + e.animDur) {
+          e.state = 'fly'; setEnemyAnim(e, 'fly');
+        }
+        if (e.state === 'fly') {
+          if (dist < 5) e.dir = (playerX < e.x) ? -1 : 1;
+          else {
+            if (e.x < e.patrolMin) e.dir = 1;
+            if (e.x > e.patrolMax) e.dir = -1;
+          }
+          e.vx = e.dir * 1.5;
+          e.x += e.vx * dt;
+          e.facing = e.dir;
+          e.bob += dt;
+          const hover = e.hover + Math.sin(e.bob * 2) * 0.3;
+          e.y = centerFromFoot(e, hover);
+        }
+        if (e.sprite) {
+          e.sprite.position.x = e.x;
+          e.sprite.position.y = e.y;
+          e.sprite.invertU = (e.facing < 0);
+        }
+      }
+
+      function updateEnemies(dt) {
+        enemies.forEach(e => {
+          if (!e.sprite) return;
+          if (e.type === 'wolf') updateWolf(e, dt); else updateBat(e, dt);
+          if (e.debugMesh) { e.debugMesh.position.x = e.x; e.debugMesh.position.y = e.y; e.debugMesh.isVisible = enemyDbg; }
+          if (e.debugLabel) {
+            const lbl = e.debugLabel;
+            lbl.mesh.position.x = e.x;
+            lbl.mesh.position.y = e.y + e.sizeUnits * 0.6;
+            if (enemyDbg) {
+              lbl.ctx.clearRect(0, 0, 128, 32);
+              lbl.ctx.fillStyle = '#ffff00';
+              lbl.ctx.font = '16px monospace';
+              lbl.ctx.fillText(e.state || e.anim, 2, 24);
+              lbl.tex.update();
+              lbl.mesh.isVisible = true;
+            } else {
+              lbl.mesh.isVisible = false;
+            }
+          }
+        });
+      }
+
+      // spawn demo enemies
+      spawnWolf(-4, 0, -6, -2);
+      spawnBat(4, 2.5, 3, 8);
+
+      // === Actions ===
     function triggerParry() {
       if (state.dead || state.blocking) return;
       state.parryOpen = true;
@@ -463,7 +658,8 @@
         `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}\n` +
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
-        `[F9] overlay  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
+        (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
+        `[F9] overlay  |  [F10] enemyDbg  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
     }
 
     // === Game loop ===
@@ -589,6 +785,7 @@
       const busy = state.rolling || state.acting || state.dead;
       if (!busy && stats.stam < stats.stamMax) setST(stats.stam + stats.stamRegenPerSec * dt);
 
+      updateEnemies(dt);
       updateOverlay();
       scene.render();
     });
