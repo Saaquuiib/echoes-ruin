@@ -127,7 +127,7 @@
     // World objects
     const ladders = [];
     const shrines = [];
-    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
+    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 4, fps: 8 };
     let campfireMgr = null;
     let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
@@ -175,8 +175,8 @@
         const alphas = [0.5, 0.3, 0.1];
         radii.forEach((r, i) => {
           const light = BABYLON.MeshBuilder.CreateDisc(`campLight${i}`, { radius: r, tessellation: 24 }, scene);
-          light.rotation.x = Math.PI / 2;
-          light.position.set(x, y + 0.01 + i * 0.002, 0);
+          light.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+          light.position.set(sp.position.x, sp.position.y, sp.position.z + i * 0.001);
           const lmat = new BABYLON.StandardMaterial(`campLightMat${i}`, scene);
           lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
           lmat.specularColor = new BABYLON.Color3(0, 0, 0);
