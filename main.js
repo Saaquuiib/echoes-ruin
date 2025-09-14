@@ -197,7 +197,7 @@
       flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0
     };
     const state = {
-      onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: 0,
+      onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity,
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
 
@@ -599,16 +599,17 @@
 
     // Light combo
     function startLightStage(stage) {
-      if (state.dead || state.blocking) return;
+      if (state.dead || state.blocking) return false;
       const name = stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
-      const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return;
-      if (stats.stam < stats.lightCost) return;
+      const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
+      if (stats.stam < stats.lightCost) return false;
       setST(stats.stam - stats.lightCost);
       state.acting = true; combo.stage = stage; combo.queued = false;
       setAnim(name, false);
       const now = performance.now();
       combo.endAt = now + playerSprite.animDurationMs;
       combo.cancelAt = now + playerSprite.animDurationMs * (meta.cancelFrac ?? 0.6);
+      return true;
     }
     function tryStartLight() {
       if (state.dead || state.rolling || state.blocking) return;
@@ -716,8 +717,8 @@
       if (combo.stage > 0 && now >= combo.endAt) {
         const cur = 'light' + combo.stage;
         const next = SHEETS[cur].next;
-        if (combo.queued && next) {
-          startLightStage(combo.stage + 1);
+        if (combo.queued && next && startLightStage(combo.stage + 1)) {
+          // next stage started
         } else {
           combo.stage = 0; combo.queued = false;
           state.acting = false;
