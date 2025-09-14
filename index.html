@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Echoes of the Ruin — HTML/JS</title>
+
+    <!-- Babylon CDN (global BABYLON namespace) -->
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <style>
+html, body { height:100%; margin:0; background:#000; }
+#game-canvas { width:100vw; height:100vh; display:block;
+  image-rendering: pixelated; image-rendering: crisp-edges; }
+
+/* === HUD === */
+#hud {
+  position: fixed; left: 12px; top: 12px; z-index: 1000;
+  color: #E3D7B7; font: 12px monospace; user-select: none;
+}
+.hbar { position: relative; width: 192px; height: 8px; margin-bottom: 4px; background: #332626; }
+.hbar > .fill { position:absolute; left:0; top:0; height:100%; width:100%; }
+#hp .fill { background:#C14D4D; }
+#stamina { height: 6px; }
+#stamina .fill { background:#4A9A7A; }
+#flasks { display:flex; gap:6px; margin-top:6px; }
+.pip { width:10px; height:10px; border:1px solid #C1B158; }
+.pip.used { background:#5a5337; border-color:#5a5337; }
+
+/* Overlay + key hint */
+#overlay {
+  position:fixed; left:8px; top:88px; padding:6px 8px;
+  background:rgba(0,0,0,.55); color:#E3D7B7; font:12px monospace;
+  border:1px solid #333; display:none; white-space:pre; user-select:none; z-index:9999;
+}
+.badge {
+  position: fixed; right: 12px; top: 12px; background: rgba(0,0,0,.55);
+  border: 1px solid #333; color:#E3D7B7; padding:6px 8px; font:12px monospace; z-index:1000;
+}
+
+    </style>
+  </head>
+
+  <body>
+    <canvas id="game-canvas" style="width:100vw;height:100vh;display:block;"></canvas>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="hp" class="hbar"><div class="fill" style="width:100%"></div></div>
+      <div id="stamina" class="hbar"><div class="fill" style="width:100%"></div></div>
+      <div id="flasks">
+        <div class="pip"></div><div class="pip"></div><div class="pip"></div>
+      </div>
+    </div>
+
+    <!-- Debug overlay & key hint -->
+    <div id="overlay"></div>
+    <div class="badge">Move: A/D or ←/→ • Jump: Space • Roll: L • Parry: Shift • Light: J • Heavy: K • Flask: F • Overlay: F9</div>
+
+    <script src="main.js"></script>
+  </body>
+</html>
