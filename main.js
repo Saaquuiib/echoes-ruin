@@ -261,6 +261,7 @@
     const stFill = document.querySelector('#stamina .fill');
     const flaskPips = [...document.querySelectorAll('#flasks .pip')];
     const promptEl = document.getElementById('prompt');
+    const fadeEl = document.getElementById('fade');
     function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
     function hidePrompt() { promptEl.style.display = 'none'; }
     function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
@@ -701,6 +702,21 @@
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
 
+    function startRespawn() {
+      fadeEl.classList.add('show');
+      setTimeout(() => {
+        placeholder.position.x = respawn.x;
+        placeholder.position.y = respawn.y;
+        state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
+        setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
+        state.dead = false; state.acting = false;
+        setAnim('idle', true);
+        playerSprite.sprite.position.x = placeholder.position.x;
+        playerSprite.sprite.position.y = placeholder.position.y;
+        fadeEl.classList.remove('show');
+      }, 600);
+    }
+
     // === OVERLAY ===
     let showColliders = false;
     let slowMo = false;
@@ -721,11 +737,11 @@
         `FPS:${engine.getFps().toFixed(0)}  Cam:ORTHO h=${ORTHO_VIEW_HEIGHT}\n` +
         `Anim:${playerSprite.state} loop:${playerSprite.loop}  size:${playerSprite.sizeUnits?.toFixed(2)} base:${playerSprite.baselineUnits?.toFixed(3)}\n` +
         `Y:${playerSprite.sprite?.position.y.toFixed(2)} FeetCenter:${feetCenterY().toFixed(2)} Ground:0 Air:${!state.onGround}\n` +
-        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}\n` +
+        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), E(interact), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
+        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
@@ -820,7 +836,8 @@
       }
       // Handle generic action end (hurt, heavy, parry, death)
       if (state.acting && actionEndAt && now >= actionEndAt) {
-        if (!state.dead) state.acting = false;
+        if (state.dead) startRespawn();
+        else state.acting = false;
         actionEndAt = 0;
         state.parryOpen = false; // ensure parry window is closed
       }
