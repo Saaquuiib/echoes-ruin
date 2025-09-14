@@ -20,7 +20,7 @@
 
 ---
 
-## 2) Design Pillars (with checks)
+## 2) Design Pillars
 
 1. **Readable, lethal combat.**
 
