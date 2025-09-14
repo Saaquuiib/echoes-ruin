@@ -161,8 +161,13 @@
         }
         return;
       }
-      const k = KeyMapDown[e.code]; if (!k) return;
-      if (k === 'overlay') toggleOverlay(); else Keys[k] = true;
+      const k = KeyMapDown[e.code];
+      if (!k || e.repeat) return;
+      if (k === 'overlay') toggleOverlay();
+      else {
+        Keys[k] = true;
+        if (k === 'jump') state.jumpBufferedAt = performance.now();
+      }
     });
 
     window.addEventListener('keyup', e => {
@@ -185,7 +190,7 @@
       hpMax: 100, hp: 100,
       stamMax: 100, stam: 100, stamRegenPerSec: 22,
       walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
-      jumpVel: 6.2, gravity: -20,
+      jumpVel: 12.6, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
@@ -482,7 +487,6 @@
         if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
         else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
 
-        if (Keys.jump) state.jumpBufferedAt = now;
         const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
         const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
         if (buffered && (state.onGround || canCoyote)) {
