@@ -216,7 +216,7 @@
     function setFlasks(n) { stats.flaskCount = n; flaskPips.forEach((p, i) => p.classList.toggle('used', i >= n)); }
     setHP(stats.hp); setST(stats.stam); setFlasks(stats.flaskCount);
 
-  
+    // === Sprite sheets ===
     const SHEETS = {
       idle:   { url: 'assets/sprites/player/Idle.png',   frames: 10, fps: 10, loop: true },
       walk:   { url: 'assets/sprites/player/Walk.png',   frames: 8,  fps: 12, loop: true },
