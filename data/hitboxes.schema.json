@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hitbox",
+  "type": "object",
+  "properties": {
+    "shape": { "type": "string", "enum": ["rect", "circle"] },
+    "offset": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"]
+    },
+    "size": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "radius": { "type": "number" }
+      }
+    }
+  },
+  "required": ["shape"]
+}
