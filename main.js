@@ -171,7 +171,6 @@
         sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
         sp.useAlphaForGlow = true;
         sp.color = new BABYLON.Color4(1, 1, 1, 1);
-
         const radii = [sp.size * 0.4, sp.size * 0.8, sp.size * 1.2];
         const alphas = [0.5, 0.3, 0.1];
         radii.forEach((r, i) => {
