@@ -4,7 +4,7 @@
 
 ---
 
-## 1) High-Concept (Expanded)
+## 1) High-Concept
 
 **USP / Fantasy.** A tightly-scoped, browser-playable souls-like with readable 2D combat and atmospheric 3D presentation (parallax, lights, post-FX). Mastery is earned by learning strict telegraphs and punish windows.
 
