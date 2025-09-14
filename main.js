@@ -416,7 +416,7 @@
         const e = { type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
           onGround: true, anim: '', patrolMin: minX, patrolMax: maxX, dir: 1,
           gravity: -20, jumpVel: 6, jumpCd: 1, baselineUnits: 0, sizeUnits: 1 };
-        await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true); //test
+        await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
         await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
         await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
         await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
@@ -555,7 +555,7 @@
       spawnWolf(-4, 0, -6, -2);
       spawnBat(4, 2.5, 3, 8);
 
-    // === Actions ===
+      // === Actions ===
     function triggerParry() {
       if (state.dead || state.blocking) return;
       state.parryOpen = true;
@@ -786,7 +786,6 @@
       // Stamina regen (disabled during actions/roll/death)
       const busy = state.rolling || state.acting || state.dead;
       if (!busy && stats.stam < stats.stamMax) setST(stats.stam + stats.stamRegenPerSec * dt);
-      
       updateEnemies(dt);
       updateOverlay();
       scene.render();
