@@ -161,13 +161,8 @@
         }
         return;
       }
-      const k = KeyMapDown[e.code];
-      if (!k || e.repeat) return;
-      if (k === 'overlay') toggleOverlay();
-      else {
-        Keys[k] = true;
-        if (k === 'jump') state.jumpBufferedAt = performance.now();
-      }
+      const k = KeyMapDown[e.code]; if (!k) return;
+      if (k === 'overlay') toggleOverlay(); else Keys[k] = true;
     });
 
     window.addEventListener('keyup', e => {
