@@ -173,7 +173,7 @@
         sp.color = new BABYLON.Color4(1, 1, 1, 1);
 
         const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
-        light.rotation.x = Math.PI / 2;
+        light.rotation.x = Math.PI / 2; // test
         light.position.set(x, y + 0.01, 0);
         const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
         lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
