@@ -273,7 +273,7 @@
 
 **Onboarding.**
 
-* First-time contextual prompts (press J to attack, Space to jump, Shift to parry) auto-disable after successful use.
+* First-time contextual prompts (**press J to attack, Space to jump, I to parry (tap) / block (hold), Hold Shift to run**) auto-disable after successful use.
 
 **Menus.**
 
@@ -517,11 +517,12 @@
 /data/entities/.json
 /data/rooms/<biome>/.json
 /data/upgrades.json
+/licenses/*
 ```
 
 **Naming & states**
 
-* States use snake\_case: `idle`, `walk`, `run`, `jump_start/mid/end`, `roll`, `block`, `parry`, `light1/2/3`, `heavy_charge/release`, `hurt`, `death`.
+* States use snake_case: `idle`, `walk`, `run`, `jump_start/mid/end`, `roll`, `block`, `parry`, `light1/2/3`, `heavy_charge/release`, `hurt`, `death`.
 * Aseprite export: JSON (hash) with frame durations; origin pivots consistent (feet at y0).
 
 **Coding standards**
