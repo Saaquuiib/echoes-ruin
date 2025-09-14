@@ -77,6 +77,8 @@
     const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
     const scene = new BABYLON.Scene(engine);
     scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+    const glow = new BABYLON.GlowLayer('glow', scene);
+    glow.intensity = 0.6;
 
     // ---- WebAudio ----
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -125,6 +127,9 @@
     // World objects
     const ladders = [];
     const shrines = [];
+    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 4, fps: 8 };
+    let campfireMgr = null;
+    let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
     let respawn = JSON.parse(localStorage.getItem(respawnKey) || 'null');
     if (respawn) {
@@ -141,12 +146,43 @@
       ladders.push({ x, y0, y1, width, mesh });
       return ladders[ladders.length - 1];
     }
-    function spawnShrine(x, y) {
+    async function spawnShrine(x, y) {
       const mesh = BABYLON.MeshBuilder.CreateCylinder('shrine', { height: 1.5, diameter: 0.5 }, scene);
       mesh.position.set(x, y + 0.75, 0);
-      const mat = new BABYLON.StandardMaterial('shrineMat', scene);
-      mat.emissiveColor = new BABYLON.Color3(0.7, 0.7, 1.0);
-      mesh.material = mat;
+      mesh.isVisible = false;
+
+      if (!campfireMgr) {
+        const { ok, w: sheetW, h: sheetH } = await loadImage(campfireMeta.url);
+        if (ok) {
+          const frameW = Math.floor(sheetW / campfireMeta.frames);
+          const frameH = sheetH;
+          campfireSizeUnits = frameH / PPU;
+          campfireMgr = new BABYLON.SpriteManager('campfireMgr', campfireMeta.url, 1, { width: frameW, height: frameH }, scene);
+          campfireMgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+          campfireMgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+          campfireMgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        }
+      }
+      if (campfireMgr) {
+        const sp = new BABYLON.Sprite('campfire', campfireMgr);
+        const fireScale = 0.6;
+        sp.size = campfireSizeUnits * fireScale;
+        sp.position = new BABYLON.Vector3(x, y + sp.size * 0.5, 0);
+        sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
+        sp.useAlphaForGlow = true;
+        sp.color = new BABYLON.Color4(1, 1, 1, 1);
+
+        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
+        light.rotation.x = Math.PI / 2;
+        light.position.set(x, y + 0.01, 0);
+        const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
+        lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        lmat.specularColor = new BABYLON.Color3(0, 0, 0);
+        lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
+        lmat.alpha = 0.6;
+        light.material = lmat;
+      }
+
       shrines.push({ x, y, mesh });
       return shrines[shrines.length - 1];
     }
@@ -284,6 +320,8 @@
       // Air & heavy
       jump:   { url: 'assets/sprites/player/Jump.png',   frames: 3,  fps: 16, loop: true },
       fall:   { url: 'assets/sprites/player/Fall.png',   frames: 3,  fps: 16, loop: true },
+      climbUp:   { url: 'assets/sprites/player/LadderUp.png',   frames: 7, fps: 12, loop: true },
+      climbDown: { url: 'assets/sprites/player/LadderDown.png', frames: 7, fps: 12, loop: true },
       heavy:  { url: 'assets/sprites/player/Heavy.png',  frames: 6,  fps: 12, loop: false },
 
       // Hurt + Death
@@ -381,6 +419,10 @@
       const walkMgr = await createManagerAuto('walk');   if (walkMgr.ok)  playerSprite.mgr.walk  = walkMgr.mgr;
       const runMgr  = await createManagerAuto('run');    if (runMgr.ok)   playerSprite.mgr.run   = runMgr.mgr;
       const rollMgr = await createManagerAuto('roll');   if (rollMgr.ok)  playerSprite.mgr.roll  = rollMgr.mgr;
+
+      // Ladder climb
+      const cu = await createManagerAuto('climbUp');   if (cu.ok) playerSprite.mgr.climbUp = cu.mgr;
+      const cd = await createManagerAuto('climbDown'); if (cd.ok) playerSprite.mgr.climbDown = cd.mgr;
 
       // Light combo
       const l1 = await createManagerAuto('light1'); if (l1.ok) playerSprite.mgr.light1 = l1.mgr;
@@ -885,6 +927,10 @@
 
         if (state.blocking) {
           targetAnim = 'block'; // override while holding block
+        } else if (state.climbing) {
+          if (state.vy > 0.15) targetAnim = 'climbUp';
+          else if (state.vy < -0.15) targetAnim = 'climbDown';
+          else targetAnim = 'climbUp';
         } else if (!state.onGround) {
           if (state.vy > 0.15) targetAnim = 'jump';
           else if (state.vy < -0.15) targetAnim = 'fall';
