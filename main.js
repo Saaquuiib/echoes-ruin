@@ -127,7 +127,7 @@
     // World objects
     const ladders = [];
     const shrines = [];
-    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
+    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 4, fps: 8 };
     let campfireMgr = null;
     let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
@@ -171,48 +171,19 @@
         sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
         sp.useAlphaForGlow = true;
         sp.color = new BABYLON.Color4(1, 1, 1, 1);
-
-        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
-        light.rotation.x = Math.PI / 2;
-        light.position.set(x, y + 0.01, 0);
-        const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
-        lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
-        lmat.specularColor = new BABYLON.Color3(0, 0, 0);
-        lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
-        lmat.alpha = 0.6;
-        light.material = lmat;
-      }
-
-      if (!campfireMgr) {
-        const { ok, w: sheetW, h: sheetH } = await loadImage(campfireMeta.url);
-        if (ok) {
-          const frameW = Math.floor(sheetW / campfireMeta.frames);
-          const frameH = sheetH;
-          campfireSizeUnits = frameH / PPU;
-          campfireMgr = new BABYLON.SpriteManager('campfireMgr', campfireMeta.url, 1, { width: frameW, height: frameH }, scene);
-          campfireMgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
-          campfireMgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
-          campfireMgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
-        }
-      }
-      if (campfireMgr) {
-        const sp = new BABYLON.Sprite('campfire', campfireMgr);
-        const fireScale = 0.6;
-        sp.size = campfireSizeUnits * fireScale;
-        sp.position = new BABYLON.Vector3(x, y + sp.size * 0.5, 0);
-        sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
-        sp.useAlphaForGlow = true;
-        sp.color = new BABYLON.Color4(1, 1, 1, 1);
-
-        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
-        light.rotation.x = Math.PI / 2;
-        light.position.set(x, y + 0.01, 0);
-        const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
-        lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
-        lmat.specularColor = new BABYLON.Color3(0, 0, 0);
-        lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
-        lmat.alpha = 0.6;
-        light.material = lmat;
+        const radii = [sp.size * 0.4, sp.size * 0.8, sp.size * 1.2];
+        const alphas = [0.5, 0.3, 0.1];
+        radii.forEach((r, i) => {
+          const light = BABYLON.MeshBuilder.CreateDisc(`campLight${i}`, { radius: r, tessellation: 24 }, scene);
+          light.rotation.x = Math.PI / 2;
+          light.position.set(x, y + 0.01 + i * 0.002, 0);
+          const lmat = new BABYLON.StandardMaterial(`campLightMat${i}`, scene);
+          lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+          lmat.specularColor = new BABYLON.Color3(0, 0, 0);
+          lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
+          lmat.alpha = alphas[i];
+          light.material = lmat;
+        });
       }
 
       shrines.push({ x, y, mesh });
