@@ -162,7 +162,11 @@
         return;
       }
       const k = KeyMapDown[e.code]; if (!k) return;
-      if (k === 'overlay') toggleOverlay(); else Keys[k] = true;
+      if (k === 'overlay') toggleOverlay();
+      else {
+        Keys[k] = true;
+        if (k === 'jump') state.jumpBufferedAt = performance.now();
+      }
     });
 
     window.addEventListener('keyup', e => {
@@ -482,7 +486,6 @@
         if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
         else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
 
-        if (Keys.jump) state.jumpBufferedAt = now;
         const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
         const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
         if (buffered && (state.onGround || canCoyote)) {
