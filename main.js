@@ -127,7 +127,7 @@
     // World objects
     const ladders = [];
     const shrines = [];
-    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 4, fps: 8 };
+    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
     let campfireMgr = null;
     let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
