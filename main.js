@@ -78,6 +78,9 @@
     const scene = new BABYLON.Scene(engine);
     scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
 
+    // ---- WebAudio ----
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
     // ===== ORTHOGRAPHIC CAMERA =====
     const camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 2, -8), scene);
     camera.setTarget(new BABYLON.Vector3(0, 1, 0));
@@ -135,7 +138,8 @@
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
-        'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask', 'F9': 'overlay', 'F10': 'enemyDbg',
+        'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
+        'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
         'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
         'KeyH': 'debugHurt', 'KeyX': 'debugDie'
       };
@@ -165,9 +169,11 @@
       if (!k || e.repeat) return;
         if (k === 'overlay') toggleOverlay();
         else if (k === 'enemyDbg') toggleEnemyDebug();
+        else if (k === 'slowMo') toggleSlowMo();
+        else if (k === 'colliders') toggleColliders();
         else
           Keys[k] = true;
-          if (k === 'jump') state.jumpBufferedAt = performance.now();
+        if (k === 'jump') state.jumpBufferedAt = performance.now();
       });
 
     window.addEventListener('keyup', e => {
@@ -648,6 +654,10 @@
     }
 
     // === OVERLAY ===
+    let showColliders = false;
+    let slowMo = false;
+    function toggleColliders() { showColliders = !showColliders; console.log('Collider meshes', showColliders ? 'ON' : 'OFF'); }
+    function toggleSlowMo() { slowMo = !slowMo; console.log('Slow-mo', slowMo ? 'ON' : 'OFF'); }
     const overlayEl = document.getElementById('overlay');
     let overlayShow = false;
     function toggleOverlay() { overlayShow = !overlayShow; overlayEl.style.display = overlayShow ? 'block' : 'none'; }
@@ -663,12 +673,13 @@
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F9] overlay  |  [F10] enemyDbg  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
+        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D, Space, L(roll), tap I=Parry, hold I=Block, J(light), K(heavy), F(flask), Hold Shift=Run  |  Debug: H(hurt) X(die)`;
     }
 
     // === Game loop ===
     engine.runRenderLoop(() => {
-      const dt = engine.getDeltaTime() / 1000;
+      const rawDt = engine.getDeltaTime() / 1000;
+      const dt = rawDt * (slowMo ? 0.25 : 1);
       const now = performance.now();
 
       // Inputs → intentions
