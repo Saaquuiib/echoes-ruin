@@ -127,7 +127,7 @@
     // World objects
     const ladders = [];
     const shrines = [];
-    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 4, fps: 8 };
+    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
     let campfireMgr = null;
     let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
@@ -168,11 +168,12 @@
         const fireScale = 0.6;
         sp.size = campfireSizeUnits * fireScale;
         sp.position = new BABYLON.Vector3(x, y + sp.size * 0.5, 0);
-        sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
+        sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / (campfireMeta.fps || 8));
         sp.useAlphaForGlow = true;
         sp.color = new BABYLON.Color4(1, 1, 1, 1);
+
         const radii = [sp.size * 0.4, sp.size * 0.8, sp.size * 1.2];
-        const alphas = [0.5, 0.3, 0.1];
+        const alphas = [0.1, 0.05, 0.02];
         radii.forEach((r, i) => {
           const light = BABYLON.MeshBuilder.CreateDisc(`campLight${i}`, { radius: r, tessellation: 24 }, scene);
           light.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
@@ -180,7 +181,7 @@
           const lmat = new BABYLON.StandardMaterial(`campLightMat${i}`, scene);
           lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
           lmat.specularColor = new BABYLON.Color3(0, 0, 0);
-          lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
+          lmat.emissiveColor = new BABYLON.Color3(0.8, 0.4, 0.05);
           lmat.alpha = alphas[i];
           light.material = lmat;
         });
