@@ -1,4 +1,4 @@
-# GDD — “Echoes of the Ruin” (Souls-like Edition — Final, Expanded)
+# GDD — “Echoes of the Ruin”
 
 *(2.5D pixel-art action platformer for the web, built with Babylon.js; one punishing difficulty; no casual modes)*
 
