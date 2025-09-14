@@ -197,11 +197,14 @@
       }
       if (campfireMgr) {
         const sp = new BABYLON.Sprite('campfire', campfireMgr);
-        sp.size = campfireSizeUnits;
-        sp.position = new BABYLON.Vector3(x, y + campfireSizeUnits * 0.5, 0);
+        const fireScale = 0.6;
+        sp.size = campfireSizeUnits * fireScale;
+        sp.position = new BABYLON.Vector3(x, y + sp.size * 0.5, 0);
         sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
+        sp.useAlphaForGlow = true;
+        sp.color = new BABYLON.Color4(1, 1, 1, 1);
 
-        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: campfireSizeUnits * 0.8, tessellation: 24 }, scene);
+        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
         light.rotation.x = Math.PI / 2;
         light.position.set(x, y + 0.01, 0);
         const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
