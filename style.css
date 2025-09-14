@@ -15,6 +15,7 @@ html, body { height:100%; margin:0; background:#000; }
 #flasks { display:flex; gap:6px; margin-top:6px; }
 .pip { width:10px; height:10px; border:1px solid #C1B158; }
 .pip.used { background:#5a5337; border-color:#5a5337; }
+#prompt { margin-top:6px; }
 
 /* Overlay + key hint */
 #overlay {
