@@ -73,10 +73,10 @@
 
 ### Input, Physics & Camera
 
-* **Polling:** fixed timestep 60 Hz; input buffer 120 ms; coyote 120 ms.
+* **Polling:** render-driven with engine.getDeltaTime(); clamp dt to a max of 1/30s; optional fixed-step (60 Hz) toggle later for deterministic combat tests; input buffer 120 ms; coyote 120 ms.
 * **Gravity:** 52 px/s²; terminal v ≈ 620 px/s; jump impulse tuned for 4 tiles.
 * **Friction:** ground decel 900 px/s²; air control 60%.
-* **Camera:** dead-zone 48×32 px; predictive 24 px toward input; screen shake capped to 6 px @ 60 ms with ease-out; clamp to level bounds.
+* **Camera:** orthographic FreeCamera; dead-zone 48×32 px; predictive 24 px toward input; screen shake capped to 6 px @ 60 ms with ease-out; clamp to level bounds.
 
 ### Hurtboxes / Hitboxes
 
@@ -289,7 +289,7 @@
 
 ## 10) Art & Content Specs (expanded)
 
-**Sprite scale & outline.** All gameplay sprites rendered at **1:1 pixel** scale; 1-px darker outline (#1E1E1E) on exterior silhouette. Use 3-tone shading (dark/mid/light) + accent.
+**Sprite scale & outline.** pixel-art preserved via NEAREST_SAMPLINGMODE; all gameplay sprites rendered at **1:1 pixel** scale; 1-px darker outline (#1E1E1E) on exterior silhouette. Use 3-tone shading (dark/mid/light) + accent.
 
 **Animation budgets.**
 
@@ -335,17 +335,22 @@
 
 ## 12) Technical Plan (Babylon.js) — Architecture
 
-**Stack.** Babylon.js 7, TypeScript, Vite, Cannon-ES (simple body for moving platforms only), WebAudio, custom GLSL post-FX.
+**Stack.** Babylon.js (CDN, global BABYLON), Vanilla JS (ES modules optional), HTML, CSS, WebAudio. No bundler/build step. (Physics helper—Cannon-ES—deferred; can be added via CDN only for moving platforms later.)
 
-**Modules.**
+**Runtime files (minimum)**
+- `index.html` — `<canvas>` + HUD + CDN scripts
+- `styles.css` — HUD/theme, pixel rendering flags
+- `main.js` — boot, camera, player controller, animation state machine, HUD hooks
 
-* `Game.ts` (boot, scene switch); `SceneLoader` (biome JSON)
-* `SpriteSystem` (Babylon SpriteManager wrapper with Y-sort)
-* `AnimController` (Aseprite JSON player)
-* `Physics2D` (grid AABB, slopes, swept resolution)
-* `AI` (FSM per enemy, behavior params from JSON)
-* `Combat` (hit/hurtbox registry, damage, stagger, hitstop)
-* `UI/HUD`, `UI/Menus`, `SaveSystem`, `AudioBus`, `PostFX`.
+**Optional module splits (as the code grows)**
+- `/js/spriteSystem.js` — SpriteManager helpers, baseline detection
+- `/js/animController.js` — animation state machine + cancel windows
+- `/js/physics2d.js` — AABB, slopes, swept collisions (initially simple)
+- `/js/ai/*.js` — enemy FSMs (wolf, bat, etc.)
+- `/js/combat.js` — hit/hurt registry, poise, hitstop
+- `/js/ui/*.js` — HUD, pause, shrine menus
+- `/js/audioBus.js` — SFX/Music buses, sidechain duck
+- `/js/postfx.js` — vignette/LUT/bloom via Babylon post-processes
 
 **Data-driven.**
 
@@ -502,14 +507,16 @@
 **Repo layout**
 
 ```
-/assets/sprites/<family>/<name>_<state>_<w>x<h>_v###.png
+/index.html
+/styles.css
+/main.js
+/js/...(optional module splits)
+/assets/sprites/<family>/<state>.png
 /assets/fx/...
 /assets/audio/sfx|music
-/data/entities/*.json
-/data/rooms/<biome>/*.json
+/data/entities/.json
+/data/rooms/<biome>/.json
 /data/upgrades.json
-/licences/*
-/src/ (TS code)
 ```
 
 **Naming & states**
@@ -519,57 +526,39 @@
 
 **Coding standards**
 
-* TypeScript strict mode; ESLint + Prettier; feature branches → PR with checklist (perf, accessibility, licenses).
+* Vanilla JS with **JSDoc types** for editor IntelliSense.
+* Optional Prettier/ESLint (browser globals); small, isolated commits.
 
 ---
 
-### Final Word
 
-This expanded GDD locks the **Dark Knight** as the player character, **Wolves → Skeleton Warriors → Ghost Warriors** as the escalating mob ladder, the **White Wolf** elite as Act I capstone, the **Fallen Knight** as an optional duel, the **Skeleton King** as mid-game gate, and the **Angel of Death** as the climactic final. It specifies mechanics down to frame windows, resource math, AI states, room metrics, audio/mix targets, shaders, data formats, and budgets—everything required to move directly into production in Babylon.js while preserving a **single, punishing, fair** souls-like difficulty.
-
-
-
-
-
-
-
-Awesome—here’s a **phase-based, step-by-step production roadmap** you (tester) and I (dev) can use to start building immediately. It’s aligned 1:1 with the final GDD and assumes an \~8-week push to a web-playable v1. Each phase lists: **Goals → Tasks → Deliverables → Definition of Done (DoD) → Test script**. Cut lines and scope brakes are called out so we don’t slip.
-
+# Production Roadmap
 ---
 
 # Phase 0 — Bootstrapping & Tooling (Day 1–2)
 
 **Goals**
-
-* Create the project skeleton, data formats, and debug scaffolding so all later work is plug-and-play.
+Stand up a zero-build, CDN-powered Babylon page with debug overlay and data stubs.
 
 **Tasks**
-
-* Repo + Vite + TypeScript + Babylon 7 scaffold; ESLint/Prettier; `.env` for build flags.
-* Folder layout per GDD §20. Add `/licenses` and `/third_party_attrib.json`.
-* Systems stubs: `SceneLoader`, `SpriteSystem`, `AnimController`, `Physics2D`, `AI`, `Combat`, `UI/HUD`, `AudioBus`, `PostFX`, `SaveSystem`.
-* **Debug overlay:** FPS, draw calls, active sprites, stamina/HP graph, toggles: show colliders, slow-mo ×0.5, godmode (dev only).
-* **Data schemas** (JSON) and loaders:
-
-  * `entities.schema.json` (hp, dmg, poise, tells, speeds, leash, drops)
-  * `room.schema.json` (tileset id, parallax layers, spawns, connectors, fog, LUT, secrets)
-  * `hitboxes.schema.json` (per-frame boxes from Aseprite export)
-* Aseprite export pipeline to PNG + JSON (hash). Add import scripts.
-* WebAudio buses: `sfx`, `music`, `ui`, with master limiter.
-* PostFX shaders wired (vignette, LUT, bloom). Toggle via debug overlay.
+- Create `index.html`, `styles.css`, `main.js`.
+- Add Babylon CDN `<script>` and minimal WebAudio init.
+- Debug overlay: FPS + toggles (colliders, slow-mo) — stubs OK.
+- Prepare JSON schemas for `/data` (entities/rooms/hitboxes) — docs for now.
+- Add `/licenses` and `third_party_attrib.json`.
+- Serve via **Live Server** (or `python -m http.server`) — not `file://`.
 
 **Deliverables**
+- Canvas renders at 60 FPS (orthographic camera).
+- Baseline player sprite anim plays; HUD bars visible.
+- Overlay hotkeys respond.
 
-* Empty scene renders 60 FPS; can load a room JSON with placeholder tiles and draw a sprite.
+**Definition of Done**
+- No console errors/404s.
+- F1 overlay, F2 colliders (stub), F3 slow-mo (stub) toggle.
 
-**DoD**
-
-* Clean build (`vite build`) succeeds; repo CI (lint+typecheck) green.
-* Debug overlay hotkey **F1**; collider view **F2**; slow-mo **F3**.
-
-**Test script (you)**
-
-* Load `/testroom.html`; toggle overlays; verify perf readouts move.
+**Test script**
+Open `index.html` via Live Server → toggle overlay → verify FPS & input hints update.
 
 ---
 
@@ -778,15 +767,16 @@ Awesome—here’s a **phase-based, step-by-step production roadmap** you (teste
 
 **Goals**
 
-* Hit perf, tighten input feel, finalize post-FX, accessibility, SFX/music mix, and package a stable web build.
+* Hit perf, tighten input feel, finalize post-FX, accessibility, SFX/music mix, and a stable **static** web build.
 
 **Tasks**
 
-* Perf: texture trimming/atlases, sprite pooling, cull rules, throttle particles under 55 FPS; compress PNGs (oxipng); audio to OGG @ 160 kbps VBR.
+* Perf: texture trimming/atlases, sprite pooling, cull rules, throttle particles under 55 FPS; optimize PNGs (oxipng/zopfli); audio to OGG @ 160 kbps VBR.
 * Post-FX tuning per biome (LUTs, bloom on stained glass only; sanity vignette pulse).
 * Accessibility: flashes off/min/normal; shake off/low/normal; color-blind palettes; subtitles; remap UI polish.
 * QA: run **encounter checklists** (below); fix fatal issues; save schema versioning; localStorage reset tool.
-* Packaging: Vite build; index landing; “Credits & Licenses” page; favicon; deploy to static host.
+* **Deploy static site** via GitHub Pages / Netlify / Cloudflare Pages.
+* Add `credits.html` + favicon.
 
 **Deliverables**
 
@@ -899,8 +889,3 @@ Awesome—here’s a **phase-based, step-by-step production roadmap** you (teste
 * Perf snapshot (min/avg/max FPS):
 
 ---
-
-This roadmap is **ready to execute**. If you spin up the repo and assets in the order above, I can start on **Phase 0→1** immediately and then march phase-by-phase. You’ll always know what to test, why it matters, and what “done” means before we move on.
-
-
-
