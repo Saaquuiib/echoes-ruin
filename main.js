@@ -149,9 +149,39 @@
     async function spawnShrine(x, y) {
       const mesh = BABYLON.MeshBuilder.CreateCylinder('shrine', { height: 1.5, diameter: 0.5 }, scene);
       mesh.position.set(x, y + 0.75, 0);
-      const mat = new BABYLON.StandardMaterial('shrineMat', scene);
-      mat.emissiveColor = new BABYLON.Color3(0.7, 0.7, 1.0);
-      mesh.material = mat;
+      mesh.isVisible = false;
+
+      if (!campfireMgr) {
+        const { ok, w: sheetW, h: sheetH } = await loadImage(campfireMeta.url);
+        if (ok) {
+          const frameW = Math.floor(sheetW / campfireMeta.frames);
+          const frameH = sheetH;
+          campfireSizeUnits = frameH / PPU;
+          campfireMgr = new BABYLON.SpriteManager('campfireMgr', campfireMeta.url, 1, { width: frameW, height: frameH }, scene);
+          campfireMgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+          campfireMgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+          campfireMgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        }
+      }
+      if (campfireMgr) {
+        const sp = new BABYLON.Sprite('campfire', campfireMgr);
+        const fireScale = 0.6;
+        sp.size = campfireSizeUnits * fireScale;
+        sp.position = new BABYLON.Vector3(x, y + sp.size * 0.5, 0);
+        sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / campfireMeta.fps);
+        sp.useAlphaForGlow = true;
+        sp.color = new BABYLON.Color4(1, 1, 1, 1);
+
+        const light = BABYLON.MeshBuilder.CreateDisc('campLight', { radius: sp.size * 0.8, tessellation: 24 }, scene);
+        light.rotation.x = Math.PI / 2;
+        light.position.set(x, y + 0.01, 0);
+        const lmat = new BABYLON.StandardMaterial('campLightMat', scene);
+        lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        lmat.specularColor = new BABYLON.Color3(0, 0, 0);
+        lmat.emissiveColor = new BABYLON.Color3(1.0, 0.5, 0.1);
+        lmat.alpha = 0.6;
+        light.material = lmat;
+      }
 
       if (!campfireMgr) {
         const { ok, w: sheetW, h: sheetH } = await loadImage(campfireMeta.url);
