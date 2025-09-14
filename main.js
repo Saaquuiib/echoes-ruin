@@ -137,7 +137,7 @@
       const h = y1 - y0;
       const mesh = BABYLON.MeshBuilder.CreateBox('ladder', { width, height: h, depth: 0.2 }, scene);
       mesh.position.set(x, y0 + h * 0.5, 0);
-      mesh.isVisible = false;
+      mesh.isVisible = true;
       ladders.push({ x, y0, y1, width, mesh });
       return ladders[ladders.length - 1];
     }
