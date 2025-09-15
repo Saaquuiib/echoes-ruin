@@ -171,13 +171,13 @@
         sp.playAnimation(0, campfireMeta.frames - 1, true, 1000 / (campfireMeta.fps || 8));
         sp.useAlphaForGlow = true;
         sp.color = new BABYLON.Color4(1, 1, 1, 1);
-
+        const baseY = sp.position.y - sp.size * 0.5;
         const radii = [sp.size * 0.4, sp.size * 0.8, sp.size * 1.2];
         const alphas = [0.1, 0.05, 0.02];
         radii.forEach((r, i) => {
           const light = BABYLON.MeshBuilder.CreateDisc(`campLight${i}`, { radius: r, tessellation: 24 }, scene);
           light.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-          light.position.set(sp.position.x, sp.position.y, sp.position.z + i * 0.001);
+          light.position.set(sp.position.x, baseY, sp.position.z + i * 0.001);
           const lmat = new BABYLON.StandardMaterial(`campLightMat${i}`, scene);
           lmat.diffuseColor = new BABYLON.Color3(0, 0, 0);
           lmat.specularColor = new BABYLON.Color3(0, 0, 0);
