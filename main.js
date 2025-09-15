@@ -185,6 +185,7 @@
           lmat.alpha = alphas[i];
           light.material = lmat;
         });
+        //test
       }
 
       shrines.push({ x, y, mesh });
