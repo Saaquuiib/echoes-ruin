@@ -372,15 +372,14 @@
     const HEAL_FX_META = { url: 'assets/sprites/Heal/heal.png', frames: 6, fps: 6.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const healFlash = {
-      sprite: null,
-      manager: null,
+      mesh: null,
+      mat: null,
       active: false,
       start: 0,
       end: 0,
-      maxAlpha: 0.65,
+      maxAlpha: 0.45,
       fadeIn: 150,
-      fadeOut: 220,
-      color: new BABYLON.Color4(0, 0, 0, 0)
+      fadeOut: 220
     };
 
     // Attack/Action timing
@@ -410,7 +409,7 @@
         console.log(`[SpriteBaseline] detected baselinePx=${baselinePx} → baselineUnits=${playerSprite.baselineUnits.toFixed(3)}`);
       }
 
-      const mgr = new BABYLON.SpriteManager('mgr_' + metaKey, meta.url, 2, { width: frameW, height: frameH }, scene);
+      const mgr = new BABYLON.SpriteManager('mgr_' + metaKey, meta.url, 1, { width: frameW, height: frameH }, scene);
       mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
       mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE; // avoid UV wrapping on odd sheets
       mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
@@ -491,111 +490,73 @@
       }
       healFx.animStart = 0;
     }
-
-    function disposeHealFlashSprite() {
-      if (healFlash.sprite) {
-        healFlash.sprite.dispose();
-        healFlash.sprite = null;
-      }
-      healFlash.manager = null;
-      if (healFlash.color) {
-        healFlash.color.r = 0;
-        healFlash.color.g = 0;
-        healFlash.color.b = 0;
-        healFlash.color.a = 0;
-      }
-    }
-
     function initHealFlash() {
-      stopHealFlash();
+      const mesh = BABYLON.MeshBuilder.CreatePlane('healFlashPlane', { width: 1, height: 1 }, scene);
+      mesh.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+      mesh.isPickable = false;
+      mesh.position.z = -0.01;
+      mesh.renderingGroupId = 1;
+      mesh.setEnabled(false);
+      const mat = new BABYLON.StandardMaterial('healFlashMat', scene);
+      mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+      mat.disableLighting = true;
+      mat.alpha = 0;
+      mat.backFaceCulling = false;
+      mat.disableDepthWrite = true;
+      mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+      mesh.material = mat;
+      healFlash.mesh = mesh;
+      healFlash.mat = mat;
     }
 
     function playHealFlash() {
-      if (!playerSprite.sprite) return;
+      if (!healFlash.mesh) return;
       const now = performance.now();
       healFlash.active = true;
       healFlash.start = now;
       healFlash.end = now + stats.flaskSip * 1000;
+      healFlash.mat.alpha = 0;
+      healFlash.mesh.setEnabled(true);
     }
 
     function stopHealFlash() {
+      if (!healFlash.mesh) return;
       healFlash.active = false;
+      healFlash.mesh.setEnabled(false);
+      if (healFlash.mat) healFlash.mat.alpha = 0;
       healFlash.start = 0;
       healFlash.end = 0;
-      disposeHealFlashSprite();
-    }
-
-    function ensureHealFlashSprite() {
-      const playerSp = playerSprite.sprite;
-      if (!playerSp) {
-        disposeHealFlashSprite();
-        return null;
-      }
-      const manager = playerSp._manager || playerSp.manager || null;
-      if (!manager) {
-        disposeHealFlashSprite();
-        return null;
-      }
-      if (healFlash.sprite && healFlash.manager !== manager) {
-        disposeHealFlashSprite();
-      }
-      if (!healFlash.sprite) {
-        const sp = new BABYLON.Sprite('healFlashSprite', manager);
-        sp.isPickable = false;
-        sp.blendMode = BABYLON.Sprite.BLENDMODE_ADD;
-        sp.color = healFlash.color;
-        sp.cellIndex = playerSp.cellIndex;
-        sp.size = playerSp.size;
-        sp.position = playerSp.position.clone();
-        sp.invertU = playerSp.invertU;
-        sp.renderingGroupId = playerSp.renderingGroupId;
-        healFlash.sprite = sp;
-        healFlash.manager = manager;
-      }
-      return healFlash.sprite;
     }
 
     function updateHealFlash(now) {
-      if (!healFlash.active && !healFlash.sprite) return;
-      const sp = ensureHealFlashSprite();
-      if (!sp) return;
-
-      const playerSp = playerSprite.sprite;
-      sp.position.x = playerSp.position.x;
-      sp.position.y = playerSp.position.y;
-      sp.size = playerSp.size;
-      sp.cellIndex = playerSp.cellIndex;
-      sp.invertU = playerSp.invertU;
-
-      let strength = 0;
-      if (healFlash.active) {
-        if (now >= healFlash.end) {
-          stopHealFlash();
-          return;
-        }
-        const total = healFlash.end - healFlash.start;
-        if (total <= 0) {
-          stopHealFlash();
-          return;
-        }
-        const t = now - healFlash.start;
-        const fadeIn = healFlash.fadeIn;
-        const fadeOut = healFlash.fadeOut;
-        strength = healFlash.maxAlpha;
-        if (t < fadeIn) {
-          strength = healFlash.maxAlpha * (t / fadeIn);
-        } else if (t > total - fadeOut) {
-          const remain = Math.max(0, total - t);
-          strength = healFlash.maxAlpha * (remain / fadeOut);
-        }
+      if (!healFlash.mesh) return;
+      if (!healFlash.mat) return;
+      healFlash.mesh.position.x = placeholder.position.x;
+      healFlash.mesh.position.y = placeholder.position.y;
+      const size = playerSprite.sizeUnits || 1.8;
+      healFlash.mesh.scaling.x = size * 0.55;
+      healFlash.mesh.scaling.y = size * 1.05;
+      if (!healFlash.active) return;
+      if (now >= healFlash.end) {
+        stopHealFlash();
+        return;
       }
-
-      strength = Math.max(0, Math.min(healFlash.maxAlpha, strength));
-      healFlash.color.r = strength;
-      healFlash.color.g = strength;
-      healFlash.color.b = strength;
-      healFlash.color.a = strength;
-      sp.color = healFlash.color;
+      const total = healFlash.end - healFlash.start;
+      if (total <= 0) {
+        stopHealFlash();
+        return;
+      }
+      const t = now - healFlash.start;
+      const fadeIn = healFlash.fadeIn;
+      const fadeOut = healFlash.fadeOut;
+      let alpha = healFlash.maxAlpha;
+      if (t < fadeIn) {
+        alpha = healFlash.maxAlpha * (t / fadeIn);
+      } else if (t > total - fadeOut) {
+        const remain = Math.max(0, total - t);
+        alpha = healFlash.maxAlpha * (remain / fadeOut);
+      }
+      healFlash.mat.alpha = Math.max(0, Math.min(healFlash.maxAlpha, alpha));
     }
 
     function cleanupFlaskState({ keepActing = false, stopFx = true } = {}) {
