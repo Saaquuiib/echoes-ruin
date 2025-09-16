@@ -20,8 +20,7 @@
 
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
-
-  const HEAVY_FEINT_WINDOW_MS = 250;
+  
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
@@ -418,7 +417,6 @@
       releasing: false,
       chargeStart: 0,
       chargeHoldMs: 0,
-      feintUntil: 0,
       minChargeAt: 0,
       maxChargeAt: 0,
       staminaSpent: false,
@@ -581,7 +579,6 @@
         cameraShake.offsetY = 0;
       }
     }
-
     function updateCameraShake(now) {
       if (!cameraShake.enabled || !cameraShake.active) {
         cameraShake.active = cameraShake.enabled ? cameraShake.active : false;
@@ -1123,7 +1120,6 @@
       heavy.releasing = false;
       heavy.chargeStart = 0;
       heavy.chargeHoldMs = 0;
-      heavy.feintUntil = 0;
       heavy.minChargeAt = 0;
       heavy.maxChargeAt = 0;
       heavy.staminaSpent = false;
@@ -1154,7 +1150,6 @@
       heavy.releasing = false;
       heavy.chargeStart = now;
       heavy.chargeHoldMs = 0;
-      heavy.feintUntil = now + HEAVY_FEINT_WINDOW_MS;
       heavy.minChargeAt = now + HEAVY_CHARGE_MIN_MS;
       heavy.maxChargeAt = now + HEAVY_CHARGE_MAX_MS;
       heavy.staminaSpent = false;
@@ -1176,10 +1171,6 @@
       const holdMs = now - heavy.chargeStart;
       heavy.chargeHoldMs = holdMs;
       heavy.chargeRatio = Math.max(0, Math.min(1, holdMs / HEAVY_CHARGE_MAX_MS));
-      if (now <= heavy.feintUntil) {
-        resetHeavyState();
-        return;
-      }
       if (!heavy.staminaSpent) {
         if (stats.stam < stats.heavyCost) {
           resetHeavyState();
