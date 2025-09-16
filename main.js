@@ -13,6 +13,18 @@
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
   const HERO_TORSO_FRAC = 0.58;         // relative height (feet->head) where torso FX center should sit
 
+  const HITSTOP_LIGHT_MS = 60;
+  const HITSTOP_HEAVY_MS = 80;
+  const HITSTOP_HEAVY_CHARGED_BONUS_MS = 20;
+  const HITSTOP_HURT_MS = 90;
+
+  const CAMERA_SHAKE_DURATION_MS = 60;
+  const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
+
+  const HEAVY_CHARGE_MIN_MS = 400;
+  const HEAVY_CHARGE_MAX_MS = 800;
+  const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
+
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
     const link = document.createElement('link');
@@ -88,7 +100,8 @@
 
     // ===== ORTHOGRAPHIC CAMERA =====
     const camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 2, -8), scene);
-    camera.setTarget(new BABYLON.Vector3(0, 1, 0));
+    const cameraTarget = new BABYLON.Vector3(0, 1, 0);
+    camera.setTarget(cameraTarget);
     camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
     function fitOrtho() {
       const aspect = engine.getRenderWidth() / engine.getRenderHeight();
@@ -98,6 +111,9 @@
       camera.orthoLeft = -right; camera.orthoRight = right;
     }
     fitOrtho();
+
+    const CAMERA_BASE_POS_Y = camera.position.y;
+    const CAMERA_BASE_TARGET_Y = cameraTarget.y;
 
     // Light
     new BABYLON.HemisphericLight('sun', new BABYLON.Vector3(0, 1, 0), scene);
@@ -217,14 +233,14 @@
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
-        'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
-        'KeyE': 'interact',
-        'KeyW': 'up', 'ArrowUp': 'up',
-        'KeyS': 'down', 'ArrowDown': 'down',
-        'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
-        'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
-        'KeyH': 'debugHurt', 'KeyX': 'debugDie'
-      };
+      'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
+      'KeyE': 'interact',
+      'KeyW': 'up', 'ArrowUp': 'up',
+      'KeyS': 'down', 'ArrowDown': 'down',
+      'F6': 'camShake', 'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
+      'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
+      'KeyH': 'debugHurt', 'KeyX': 'debugDie'
+    };
       const KeyMapUp = {
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
@@ -252,18 +268,22 @@
       }
       const k = KeyMapDown[e.code];
       if (!k || e.repeat) return;
-        if (k === 'overlay') toggleOverlay();
-        else if (k === 'enemyDbg') toggleEnemyDebug();
-        else if (k === 'slowMo') toggleSlowMo();
-        else if (k === 'colliders') toggleColliders();
-        else
-          Keys[k] = true;
+      if (k === 'overlay') toggleOverlay();
+      else if (k === 'enemyDbg') toggleEnemyDebug();
+      else if (k === 'slowMo') toggleSlowMo();
+      else if (k === 'colliders') toggleColliders();
+      else if (k === 'camShake') toggleCameraShake();
+      else if (k === 'heavy') {
+        startHeavyCharge();
+      } else {
+        Keys[k] = true;
         if (k === 'jump') {
           const pressAt = performance.now();
           state.jumpBufferedAt = pressAt;
           state.lastJumpPressAt = pressAt;
         }
-      });
+      }
+    });
 
     window.addEventListener('keyup', e => {
       if (e.code === 'KeyI') {
@@ -277,6 +297,10 @@
         return;
       }
       const k = KeyMapUp[e.code]; if (!k) return;
+      if (k === 'heavy') {
+        releaseHeavyCharge();
+        return;
+      }
       Keys[k] = false;
     });
 
@@ -289,6 +313,8 @@
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
+      heavyDamage: 30, heavyStagger: 0.6,
+      heavyChargeBonusDamage: 12, heavyChargeBonusStagger: 0.2,
       flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
     };
     const state = {
@@ -386,6 +412,42 @@
 
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false };
+    const heavy = {
+      charging: false,
+      releasing: false,
+      chargeStart: 0,
+      chargeHoldMs: 0,
+      minChargeAt: 0,
+      maxChargeAt: 0,
+      staminaSpent: false,
+      charged: false,
+      chargeRatio: 0,
+      pendingHit: false,
+      hitAt: 0,
+      hitApplied: false,
+      hitMeta: null,
+      releaseDamage: 0,
+      releaseStagger: 0,
+      lastHoldMs: 0,
+      lastDamage: 0,
+      lastStagger: 0
+    };
+    const timeline = {
+      hitstopUntil: 0,
+      lastAnimationScale: 1,
+      animRatioWrapped: false,
+      baseGetAnimationRatio: null
+    };
+    const cameraShake = {
+      enabled: true,
+      active: false,
+      start: 0,
+      duration: 0,
+      magnitude: 0,
+      seed: 0,
+      offsetX: 0,
+      offsetY: 0
+    };
     let actionEndAt = 0; // generic end time for non-combo actions (hurt, heavy, parry, death)
 
     async function createManagerAuto(metaKey, computeBaseline = false) {
@@ -429,7 +491,7 @@
       return feetY + size * HERO_TORSO_FRAC;
     }
 
-    function setAnim(name, loopOverride) {
+    function setAnim(name, loopOverride, opts = {}) {
       if (!playerSprite.sprite) return;
       const meta = SHEETS[name]; if (!meta) return;
       const mgr = playerSprite.mgr[name]; if (!mgr) return;
@@ -445,18 +507,126 @@
       sp.position = new BABYLON.Vector3(pos.x, pos.y, 0);
       sp.invertU = facingLeft;
       const loop = (typeof loopOverride === 'boolean') ? loopOverride : !!meta.loop;
-      sp.playAnimation(0, meta.frames - 1, loop, 1000 / meta.fps);
+      const shouldPlay = opts.play !== false;
+      if (shouldPlay) {
+        sp.playAnimation(0, meta.frames - 1, loop, 1000 / meta.fps);
+      } else {
+        const frame = Math.max(0, Math.min(meta.frames - 1, typeof opts.frame === 'number' ? opts.frame : 0));
+        sp.cellIndex = frame;
+      }
 
-      // NOTE: do NOT manually freeze last frame; Babylon already stops at 'to' when loop=false.
-      // Manual freezing could keep a non-looping anim "stuck" visually if the state machine doesn't override.
+      // NOTE: default path avoids manual freezing so non-looping anims complete naturally.
 
       playerSprite.sprite = sp;
       playerSprite.state = name;
       playerSprite.sizeUnits = sizeUnits;
       playerSprite.loop = loop;
       playerSprite.animStarted = performance.now();
-      playerSprite.animDurationMs = (meta.frames / meta.fps) * 1000;
+      if (typeof opts.manualDuration === 'number') {
+        playerSprite.animDurationMs = opts.manualDuration;
+      } else {
+        playerSprite.animDurationMs = shouldPlay ? (meta.frames / meta.fps) * 1000 : 0;
+      }
     }
+
+    function applyAnimationScale(scale) {
+      if (!isFinite(scale)) return;
+      if (Math.abs(timeline.lastAnimationScale - scale) < 0.001) return;
+      timeline.lastAnimationScale = scale;
+      if (typeof scene.animationTimeScale === 'number') {
+        scene.animationTimeScale = scale;
+        return;
+      }
+      if (!timeline.animRatioWrapped && typeof scene.getAnimationRatio === 'function') {
+        const base = scene.getAnimationRatio.bind(scene);
+        scene.getAnimationRatio = function () {
+          return base() * timeline.lastAnimationScale;
+        };
+        timeline.baseGetAnimationRatio = base;
+        timeline.animRatioWrapped = true;
+      }
+    }
+
+    function requestHitstop(durationMs) {
+      const now = performance.now();
+      const dur = Math.max(0, durationMs || 0);
+      const until = now + dur;
+      if (until > timeline.hitstopUntil) timeline.hitstopUntil = until;
+    }
+
+    function hitstopRemaining(now = performance.now()) {
+      return Math.max(0, timeline.hitstopUntil - now);
+    }
+
+    function triggerCameraShake({ magnitude = CAMERA_SHAKE_MAG, durationMs = CAMERA_SHAKE_DURATION_MS } = {}) {
+      if (!cameraShake.enabled) return;
+      const now = performance.now();
+      const duration = Math.max(0, durationMs || 0);
+      if (cameraShake.active) {
+        const elapsed = now - cameraShake.start;
+        const remain = Math.max(0, cameraShake.duration - elapsed);
+        if (remain >= duration && cameraShake.magnitude >= magnitude) {
+          return; // existing shake is stronger/longer
+        }
+      }
+      cameraShake.active = duration > 0 && magnitude > 0;
+      cameraShake.start = now;
+      cameraShake.duration = duration;
+      cameraShake.magnitude = magnitude;
+      cameraShake.seed = Math.random() * Math.PI * 2;
+      if (!cameraShake.active) {
+        cameraShake.offsetX = 0;
+        cameraShake.offsetY = 0;
+      }
+    }
+
+    function updateCameraShake(now) {
+      if (!cameraShake.enabled || !cameraShake.active) {
+        cameraShake.active = cameraShake.enabled ? cameraShake.active : false;
+        cameraShake.offsetX = 0;
+        cameraShake.offsetY = 0;
+        return;
+      }
+      const elapsed = now - cameraShake.start;
+      if (elapsed >= cameraShake.duration) {
+        cameraShake.active = false;
+        cameraShake.offsetX = 0;
+        cameraShake.offsetY = 0;
+        return;
+      }
+      const t = Math.max(0, Math.min(1, elapsed / Math.max(1, cameraShake.duration)));
+      const falloff = 1 - t;
+      const angle = cameraShake.seed + t * Math.PI * 6;
+      const magnitude = cameraShake.magnitude * falloff;
+      cameraShake.offsetX = Math.cos(angle) * magnitude;
+      cameraShake.offsetY = Math.sin(angle * 1.7) * magnitude * 0.6;
+    }
+
+    function applyImpactEffects({ hitstopMs, shakeMagnitude, shakeDurationMs } = {}) {
+      if (hitstopMs) requestHitstop(hitstopMs);
+      if (shakeMagnitude) {
+        triggerCameraShake({ magnitude: shakeMagnitude, durationMs: shakeDurationMs ?? CAMERA_SHAKE_DURATION_MS });
+      }
+    }
+
+    function onPlayerAttackLand(meta = {}) {
+      const kind = meta.type || 'light';
+      const charged = !!meta.charged;
+      let hitstopMs = meta.hitstopMs;
+      let shakeMag = meta.shakeMagnitude;
+      if (hitstopMs == null) {
+        hitstopMs = (kind === 'heavy')
+          ? HITSTOP_HEAVY_MS + (charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0)
+          : HITSTOP_LIGHT_MS;
+      }
+      if (shakeMag == null) {
+        const base = kind === 'heavy' ? CAMERA_SHAKE_MAG : CAMERA_SHAKE_MAG * 0.75;
+        shakeMag = charged ? base * 1.4 : base;
+      }
+      applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs: meta.shakeDurationMs });
+    }
+
+    applyAnimationScale(1);
 
     async function initHealFx() {
       const { ok, w: sheetW, h: sheetH } = await loadImage(HEAL_FX_META.url);
@@ -946,24 +1116,109 @@
       startLightStage(1);
     }
 
-    // Heavy (grounded only; one-shot)
-    function doHeavy() {
-      if (state.dead || state.rolling || state.acting || state.blocking) return;
+    function resetHeavyState({ keepActing = false } = {}) {
+      heavy.charging = false;
+      heavy.releasing = false;
+      heavy.chargeStart = 0;
+      heavy.chargeHoldMs = 0;
+      heavy.minChargeAt = 0;
+      heavy.maxChargeAt = 0;
+      heavy.staminaSpent = false;
+      heavy.charged = false;
+      heavy.chargeRatio = 0;
+      heavy.pendingHit = false;
+      heavy.hitAt = 0;
+      heavy.hitApplied = false;
+      heavy.hitMeta = null;
+      heavy.releaseDamage = 0;
+      heavy.releaseStagger = 0;
+      if (!keepActing) state.acting = false;
+    }
+
+    function startHeavyCharge() {
+      if (heavy.charging || heavy.releasing) return;
+      if (state.dead || state.rolling || state.blocking) return;
+      if (!state.onGround) return;
+      if (state.acting && !state.flasking) return;
       if (!playerSprite.mgr.heavy) return;
       if (stats.stam < stats.heavyCost) return;
-      setST(stats.stam - stats.heavyCost);
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.flasking = false;
       state.acting = true;
       combo.stage = 0; combo.queued = false;
-      setAnim('heavy', false);
-      actionEndAt = performance.now() + playerSprite.animDurationMs;
+      const now = performance.now();
+      heavy.charging = true;
+      heavy.releasing = false;
+      heavy.chargeStart = now;
+      heavy.chargeHoldMs = 0;
+      heavy.minChargeAt = now + HEAVY_CHARGE_MIN_MS;
+      heavy.maxChargeAt = now + HEAVY_CHARGE_MAX_MS;
+      heavy.staminaSpent = false;
+      heavy.charged = false;
+      heavy.chargeRatio = 0;
+      heavy.pendingHit = false;
+      heavy.hitApplied = false;
+      heavy.hitMeta = null;
+      heavy.releaseDamage = stats.heavyDamage;
+      heavy.releaseStagger = stats.heavyStagger;
+      if (playerSprite.mgr.heavy) {
+        setAnim('heavy', false, { play: false, frame: 0, manualDuration: 0 });
+      }
+    }
+
+    function releaseHeavyCharge() {
+      if (!heavy.charging) return;
+      const now = performance.now();
+      const holdMs = now - heavy.chargeStart;
+      heavy.chargeHoldMs = holdMs;
+      heavy.chargeRatio = Math.max(0, Math.min(1, holdMs / HEAVY_CHARGE_MAX_MS));
+      if (!heavy.staminaSpent) {
+        if (stats.stam < stats.heavyCost) {
+          resetHeavyState();
+          return;
+        }
+        setST(stats.stam - stats.heavyCost);
+        heavy.staminaSpent = true;
+      }
+      heavy.charging = false;
+      heavy.releasing = true;
+      state.flasking = false;
+      heavy.charged = holdMs >= HEAVY_CHARGE_MIN_MS;
+      heavy.releaseDamage = stats.heavyDamage + (heavy.charged ? stats.heavyChargeBonusDamage : 0);
+      heavy.releaseStagger = stats.heavyStagger + (heavy.charged ? stats.heavyChargeBonusStagger : 0);
+      heavy.lastHoldMs = holdMs;
+      heavy.lastDamage = heavy.releaseDamage;
+      heavy.lastStagger = heavy.releaseStagger;
+      if (playerSprite.mgr.heavy) setAnim('heavy', false);
+      const releaseStart = performance.now();
+      const animDur = playerSprite.animDurationMs;
+      heavy.hitAt = releaseStart + Math.max(0, animDur * HEAVY_HIT_FRAC);
+      heavy.pendingHit = animDur > 0;
+      heavy.hitApplied = false;
+      heavy.hitMeta = {
+        type: 'heavy',
+        charged: heavy.charged,
+        hitstopMs: HITSTOP_HEAVY_MS + (heavy.charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0),
+        shakeMagnitude: CAMERA_SHAKE_MAG * (heavy.charged ? 1.4 : 1.0),
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS * (heavy.charged ? 1.2 : 1),
+        damage: heavy.releaseDamage,
+        stagger: heavy.releaseStagger
+      };
+      actionEndAt = releaseStart + animDur;
+      if (!heavy.pendingHit && heavy.hitMeta) {
+        onPlayerAttackLand(heavy.hitMeta);
+        heavy.hitMeta = null;
+        heavy.hitApplied = true;
+      }
     }
 
     // Hurt + Death
     function triggerHurt(dmg = 15) {
       if (state.dead) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
+      resetHeavyState({ keepActing: true });
       setHP(stats.hp - dmg);
+      applyImpactEffects({ hitstopMs: HITSTOP_HURT_MS, shakeMagnitude: CAMERA_SHAKE_MAG * 1.05, shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 1.1 });
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
       state.acting = true; combo.stage = 0; combo.queued = false;
@@ -973,6 +1228,7 @@
     function die() {
       if (state.dead) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
+      resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       state.blocking = false; state.parryOpen = false;
       combo.stage = 0; combo.queued = false;
@@ -988,6 +1244,7 @@
         state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
         state.dead = false; state.acting = false; state.flasking = false;
+        resetHeavyState();
         setAnim('idle', true);
         playerSprite.sprite.position.x = placeholder.position.x;
         playerSprite.sprite.position.y = placeholder.position.y;
@@ -1004,6 +1261,15 @@
       console.log('Collider meshes', showColliders ? 'ON' : 'OFF');
     }
     function toggleSlowMo() { slowMo = !slowMo; console.log('Slow-mo', slowMo ? 'ON' : 'OFF'); }
+    function toggleCameraShake() {
+      cameraShake.enabled = !cameraShake.enabled;
+      if (!cameraShake.enabled) {
+        cameraShake.active = false;
+        cameraShake.offsetX = 0;
+        cameraShake.offsetY = 0;
+      }
+      console.log('Camera micro-shake', cameraShake.enabled ? 'ON' : 'OFF');
+    }
     const overlayEl = document.getElementById('overlay');
     let overlayShow = false;
     function toggleOverlay() { overlayShow = !overlayShow; overlayEl.style.display = overlayShow ? 'block' : 'none'; }
@@ -1011,6 +1277,12 @@
       if (!overlayShow) return;
       const now = performance.now();
       const parryRemain = Math.max(0, state.parryUntil - now);
+      const heavyHoldMs = heavy.charging ? heavy.chargeHoldMs : heavy.lastHoldMs;
+      const heavyHoldSec = heavyHoldMs / 1000;
+      const heavyDmg = heavy.releasing ? heavy.releaseDamage : (heavy.lastDamage || stats.heavyDamage);
+      const heavyStag = heavy.releasing ? heavy.releaseStagger : (heavy.lastStagger || stats.heavyStagger);
+      const heavyChargedDisplay = heavy.charging ? heavy.charged : (heavy.lastHoldMs >= HEAVY_CHARGE_MIN_MS && heavy.lastHoldMs > 0);
+      const hitstopMs = hitstopRemaining(now);
       overlayEl.textContent =
         `FPS:${engine.getFps().toFixed(0)}  Cam:ORTHO h=${ORTHO_VIEW_HEIGHT}\n` +
         `Anim:${playerSprite.state} loop:${playerSprite.loop}  size:${playerSprite.sizeUnits?.toFixed(2)} base:${playerSprite.baselineUnits?.toFixed(3)}\n` +
@@ -1018,15 +1290,34 @@
         `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
+        `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)} stag:${heavyStag.toFixed(2)}\n` +
+        `Hitstop:${hitstopMs.toFixed(0)}ms  CamShake:${cameraShake.enabled} (active:${cameraShake.active})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
+        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
     engine.runRenderLoop(() => {
-      const rawDt = engine.getDeltaTime() / 1000;
-      const dt = rawDt * (slowMo ? 0.25 : 1);
       const now = performance.now();
+      const rawDt = engine.getDeltaTime() / 1000;
+      const baseScale = slowMo ? 0.25 : 1;
+      const hitstopActive = hitstopRemaining(now) > 0;
+      const dtScale = hitstopActive ? 0 : baseScale;
+      const dt = rawDt * dtScale;
+      applyAnimationScale(hitstopActive ? 0 : 1);
+
+      if (heavy.charging) {
+        heavy.chargeHoldMs = now - heavy.chargeStart;
+        heavy.chargeRatio = Math.max(0, Math.min(1, heavy.chargeHoldMs / HEAVY_CHARGE_MAX_MS));
+        heavy.charged = heavy.chargeHoldMs >= HEAVY_CHARGE_MIN_MS;
+      }
+      if (heavy.pendingHit && !heavy.hitApplied && now >= heavy.hitAt) {
+        heavy.hitApplied = true;
+        const meta = heavy.hitMeta || { type: 'heavy', charged: heavy.charged };
+        onPlayerAttackLand(meta);
+        heavy.pendingHit = false;
+        heavy.hitMeta = null;
+      }
 
       if (state.flasking) {
         if (!state.flaskHealApplied && now >= stats.flaskLock) {
@@ -1109,7 +1400,6 @@
 
       // Light/Heavy/Flask/Debug
       if (Keys.light) { tryStartLight(); Keys.light = false; }
-      if (Keys.heavy) { doHeavy(); Keys.heavy = false; }
       if (Keys.flask) { tryFlask(); Keys.flask = false; }
       if (Keys.debugHurt) { triggerHurt(15); Keys.debugHurt = false; }
       if (Keys.debugDie)  { die(); Keys.debugDie = false; }
@@ -1133,6 +1423,17 @@
         if (state.dead) startRespawn();
         else if (state.flasking) cleanupFlaskState();
         else state.acting = false;
+        if (heavy.releasing || heavy.pendingHit) {
+          heavy.releasing = false;
+          heavy.pendingHit = false;
+          heavy.hitMeta = null;
+          heavy.hitApplied = false;
+          heavy.staminaSpent = false;
+          heavy.chargeStart = 0;
+          heavy.chargeHoldMs = 0;
+          heavy.chargeRatio = 0;
+          heavy.charged = false;
+        }
         actionEndAt = 0;
         state.parryOpen = false; // ensure parry window is closed
       }
@@ -1268,9 +1569,15 @@
         }
       }
 
-      // Camera follow (x only)
-      camera.position.x = placeholder.position.x;
-      camera.setTarget(new BABYLON.Vector3(placeholder.position.x, 1, 0));
+      // Camera follow (x only) + micro-shake offset
+      updateCameraShake(now);
+      const shakeX = cameraShake.offsetX;
+      const shakeY = cameraShake.offsetY;
+      camera.position.x = placeholder.position.x + shakeX;
+      camera.position.y = CAMERA_BASE_POS_Y + shakeY;
+      cameraTarget.x = placeholder.position.x + shakeX;
+      cameraTarget.y = CAMERA_BASE_TARGET_Y + shakeY;
+      camera.setTarget(cameraTarget);
 
       // Stamina regen (disabled during actions/roll/death)
       const busy = state.rolling || state.acting || state.dead;
