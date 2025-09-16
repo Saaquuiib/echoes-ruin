@@ -371,6 +371,7 @@
 
     const HEAL_FX_META = { url: 'assets/sprites/Heal/heal.png', frames: 6, fps: 6.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
+    const HEAL_FX_FRONT_OFFSET = 0.01;
     const healFlash = {
       sprite: null,
       manager: null,
@@ -478,7 +479,13 @@
       if (healFx.sprite) { healFx.sprite.dispose(); healFx.sprite = null; }
       const sp = new BABYLON.Sprite('fx_heal_active', healFx.mgr);
       sp.size = healFx.sizeUnits;
-      sp.position = new BABYLON.Vector3(placeholder.position.x, placeholder.position.y, 0);
+      const playerSp = playerSprite.sprite;
+      const basePos = playerSp ? playerSp.position : placeholder.position;
+      const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+      sp.position = new BABYLON.Vector3(basePos.x, basePos.y, baseZ - HEAL_FX_FRONT_OFFSET);
+      if (playerSp && typeof playerSp.renderingGroupId === 'number') {
+        sp.renderingGroupId = playerSp.renderingGroupId;
+      }
       sp.playAnimation(0, HEAL_FX_META.frames - 1, false, 1000 / HEAL_FX_META.fps);
       healFx.sprite = sp;
       healFx.animStart = performance.now();
@@ -1190,8 +1197,20 @@
         playerSprite.sprite.invertU = (state.facing < 0);
       }
       if (healFx.sprite) {
-        healFx.sprite.position.x = placeholder.position.x;
-        healFx.sprite.position.y = placeholder.position.y;
+        const playerSp = playerSprite.sprite;
+        if (playerSp) {
+          healFx.sprite.position.x = playerSp.position.x;
+          healFx.sprite.position.y = playerSp.position.y;
+          healFx.sprite.position.z = playerSp.position.z - HEAL_FX_FRONT_OFFSET;
+          if (typeof playerSp.renderingGroupId === 'number') {
+            healFx.sprite.renderingGroupId = playerSp.renderingGroupId;
+          }
+        } else {
+          healFx.sprite.position.x = placeholder.position.x;
+          healFx.sprite.position.y = placeholder.position.y;
+          const baseZ = (typeof placeholder.position.z === 'number') ? placeholder.position.z : 0;
+          healFx.sprite.position.z = baseZ - HEAL_FX_FRONT_OFFSET;
+        }
         if (!state.flasking && healFx.animStart && now >= healFx.animStart + healFx.animDuration) {
           stopHealFx();
         }
