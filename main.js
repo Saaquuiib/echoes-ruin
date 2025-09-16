@@ -20,7 +20,7 @@
 
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
-
+  
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
@@ -579,7 +579,6 @@
         cameraShake.offsetY = 0;
       }
     }
-
     function updateCameraShake(now) {
       if (!cameraShake.enabled || !cameraShake.active) {
         cameraShake.active = cameraShake.enabled ? cameraShake.active : false;
