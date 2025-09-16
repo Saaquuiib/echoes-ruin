@@ -11,6 +11,7 @@
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
+  const HERO_TORSO_FRAC = 0.58;         // relative height (feet->head) where torso FX center should sit
 
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
@@ -360,6 +361,7 @@
 
     const playerSprite = {
       mgr: {},
+      sizeByAnim: {},
       sprite: null,
       state: 'idle',
       sizeUnits: 2,
@@ -389,7 +391,8 @@
       const frameH = Math.floor(sheetH / rows);
 
       // Height in world units from pixel height
-      playerSprite.sizeUnits = frameH / PPU;
+      const sizeUnits = frameH / PPU;
+      playerSprite.sizeByAnim[metaKey] = sizeUnits;
 
       // Baseline auto-detect (idle only)
       if (computeBaseline) {
@@ -403,12 +406,18 @@
       mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE; // avoid UV wrapping on odd sheets
       mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
 
-      console.log(`[Sprite] ${metaKey}: sheet ${sheetW}x${sheetH}, frames=${meta.frames}, cell ${frameW}x${frameH}, sizeUnits=${playerSprite.sizeUnits.toFixed(2)}`);
+      console.log(`[Sprite] ${metaKey}: sheet ${sheetW}x${sheetH}, frames=${meta.frames}, cell ${frameW}x${frameH}, sizeUnits=${sizeUnits.toFixed(2)}`);
       return { ok: true, mgr, frameW, frameH };
     }
 
     // Compute the center Y that puts FEET at ground (y=0)
     function feetCenterY() { return (playerSprite.sizeUnits * 0.5) - playerSprite.baselineUnits; }
+    function torsoCenterY() {
+      const size = playerSprite.sizeUnits;
+      const centerY = placeholder.position.y;
+      const feetY = centerY - (size * 0.5) + playerSprite.baselineUnits;
+      return feetY + size * HERO_TORSO_FRAC;
+    }
 
     function setAnim(name, loopOverride) {
       if (!playerSprite.sprite) return;
@@ -421,7 +430,8 @@
       old.dispose();
 
       const sp = new BABYLON.Sprite('playerSprite', mgr);
-      sp.size = playerSprite.sizeUnits;
+      const sizeUnits = playerSprite.sizeByAnim[name] ?? playerSprite.sizeUnits;
+      sp.size = sizeUnits;
       sp.position = new BABYLON.Vector3(pos.x, pos.y, 0);
       sp.invertU = facingLeft;
       const loop = (typeof loopOverride === 'boolean') ? loopOverride : !!meta.loop;
@@ -432,6 +442,7 @@
 
       playerSprite.sprite = sp;
       playerSprite.state = name;
+      playerSprite.sizeUnits = sizeUnits;
       playerSprite.loop = loop;
       playerSprite.animStarted = performance.now();
       playerSprite.animDurationMs = (meta.frames / meta.fps) * 1000;
@@ -458,9 +469,8 @@
       if (healFx.sprite) { healFx.sprite.dispose(); healFx.sprite = null; }
       const sp = new BABYLON.Sprite('fx_heal_active', healFx.mgr);
       sp.size = healFx.sizeUnits;
-      const torsoOffset = playerSprite.sizeUnits * 0.35;
-      sp.position = new BABYLON.Vector3(placeholder.position.x,
-        placeholder.position.y + torsoOffset, 0);
+      const torsoY = torsoCenterY();
+      sp.position = new BABYLON.Vector3(placeholder.position.x, torsoY, 0);
       sp.playAnimation(0, HEAL_FX_META.frames - 1, false, 1000 / HEAL_FX_META.fps);
       healFx.sprite = sp;
       healFx.animStart = performance.now();
@@ -512,6 +522,7 @@
       const idleMgr = await createManagerAuto('idle', true);
       if (!idleMgr.ok) { console.warn('Idle sheet missing; keeping placeholder.'); return; }
       playerSprite.mgr.idle = idleMgr.mgr;
+      playerSprite.sizeUnits = playerSprite.sizeByAnim.idle ?? playerSprite.sizeUnits;
 
       // Movement
       const walkMgr = await createManagerAuto('walk');   if (walkMgr.ok)  playerSprite.mgr.walk  = walkMgr.mgr;
@@ -1096,9 +1107,8 @@
         playerSprite.sprite.invertU = (state.facing < 0);
       }
       if (healFx.sprite) {
-        const torsoOffset = playerSprite.sizeUnits * 0.35;
         healFx.sprite.position.x = placeholder.position.x;
-        healFx.sprite.position.y = placeholder.position.y + torsoOffset;
+        healFx.sprite.position.y = torsoCenterY();
         if (!state.flasking && healFx.animStart && now >= healFx.animStart + healFx.animDuration) {
           stopHealFx();
         }
@@ -1129,7 +1139,7 @@
         }
       }
 
-      const allowStateMachine = !state.rolling && (!state.acting || state.flasking) && !state.dead && playerSprite.sprite;
+      const allowStateMachine = !state.rolling && !state.acting && !state.dead && playerSprite.sprite;
       if (allowStateMachine) {
         let targetAnim = 'idle';
 
