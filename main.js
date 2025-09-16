@@ -9,7 +9,8 @@
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const PARRY_WINDOW_MS = 120;          // parry window + parry anim duration
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
-  const LANDING_MIN_GROUNDED_MS = 1;    // delay landing anim until on-ground persisted into next frame
+  const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
+  const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
 
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
@@ -256,7 +257,11 @@
         else if (k === 'colliders') toggleColliders();
         else
           Keys[k] = true;
-        if (k === 'jump') state.jumpBufferedAt = performance.now();
+        if (k === 'jump') {
+          const pressAt = performance.now();
+          state.jumpBufferedAt = pressAt;
+          state.lastJumpPressAt = pressAt;
+        }
       });
 
     window.addEventListener('keyup', e => {
@@ -286,7 +291,7 @@
       flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
     };
     const state = {
-      onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity,
+      onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity, lastJumpPressAt: -Infinity,
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
       flasking: false,
@@ -298,7 +303,8 @@
       climbing: false,
       landing: false,
       landingStartAt: 0,
-      landingUntil: 0
+      landingUntil: 0,
+      landingTriggeredAt: 0
     };
 
     // === HUD refs ===
@@ -329,7 +335,7 @@
       // Air & heavy
       jump:   { url: 'assets/sprites/player/Jump.png',   frames: 3,  fps: 16, loop: true },
       fall:   { url: 'assets/sprites/player/Fall.png',   frames: 3,  fps: 16, loop: true },
-      landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 20, loop: false },
+      landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 16, loop: false },
       climbUp:   { url: 'assets/sprites/player/LadderUp.png',   frames: 7, fps: 12, loop: true },
       climbDown: { url: 'assets/sprites/player/LadderDown.png', frames: 7, fps: 12, loop: true },
       heavy:  { url: 'assets/sprites/player/Heavy.png',  frames: 6,  fps: 12, loop: false },
@@ -862,7 +868,13 @@
           const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
           const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
           if (buffered && (state.onGround || canCoyote)) {
-            state.vy = stats.jumpVel; state.onGround = false; state.jumpBufferedAt = 0;
+            state.vy = stats.jumpVel;
+            state.onGround = false;
+            state.jumpBufferedAt = 0;
+            state.landing = false;
+            state.landingStartAt = 0;
+            state.landingUntil = 0;
+            state.landingTriggeredAt = 0;
           }
         }
       } else {
@@ -944,13 +956,22 @@
         const falling = vyBefore < -0.2;
         const jumpBuffered = state.jumpBufferedAt &&
           (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+        const jumpPressedRecently = state.lastJumpPressAt &&
+          (now - state.lastJumpPressAt) <= LANDING_SPAM_GRACE_MS;
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
-          !state.rolling && (!state.acting || state.flasking) && !state.blocking && !state.dead && !jumpBuffered;
+          !state.rolling && (!state.acting || state.flasking) && !state.blocking && !state.dead &&
+          !jumpBuffered && !jumpPressedRecently;
         if (canTriggerLanding) {
           const dur = (landingMeta.frames / landingMeta.fps) * 1000;
           state.landing = true;
+          state.landingTriggeredAt = now;
           state.landingStartAt = now + LANDING_MIN_GROUNDED_MS;
           state.landingUntil = state.landingStartAt + dur;
+        } else {
+          state.landing = false;
+          state.landingTriggeredAt = 0;
+          state.landingStartAt = 0;
+          state.landingUntil = 0;
         }
       }
 
@@ -971,11 +992,16 @@
       // Animation state machine (skip while rolling/dead/other actions)
       let landingActive = false;
       if (state.landing) {
-        const eligibleNow = state.onGround && !state.blocking && now < state.landingUntil;
+        const jumpBufferedNow = state.jumpBufferedAt &&
+          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+        const jumpPressedAfterLanding = state.lastJumpPressAt > state.landingTriggeredAt;
+        const eligibleNow = state.onGround && !state.blocking && (!state.acting || state.flasking) && !state.dead &&
+          now < state.landingUntil && !jumpBufferedNow && !jumpPressedAfterLanding;
         if (!eligibleNow) {
           state.landing = false;
           state.landingStartAt = 0;
           state.landingUntil = 0;
+          state.landingTriggeredAt = 0;
         } else if (now >= state.landingStartAt) {
           landingActive = true;
         }
