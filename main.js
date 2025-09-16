@@ -11,6 +11,7 @@
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
+  const HERO_TORSO_FRAC = 0.58;         // relative height (feet->head) where torso FX center should sit
 
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
@@ -295,6 +296,11 @@
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
       flasking: false,
+      flaskPhase: '',
+      flaskStart: 0,
+      flaskEndAt: 0,
+      flaskHealApplied: false,
+      flaskKneelDoneAt: 0,
 
       // New
       blocking: false,
@@ -313,6 +319,8 @@
     const flaskPips = [...document.querySelectorAll('#flasks .pip')];
     const promptEl = document.getElementById('prompt');
     const fadeEl = document.getElementById('fade');
+    const healScreenEl = document.getElementById('heal-screen');
+    let healScreenTimer = null;
     function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
     function hidePrompt() { promptEl.style.display = 'none'; }
     function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
@@ -326,6 +334,8 @@
       walk:   { url: 'assets/sprites/player/Walk.png',   frames: 8,  fps: 12, loop: true },
       run:    { url: 'assets/sprites/player/Run.png',    frames: 8,  fps: 14, loop: true },
       roll:   { url: 'assets/sprites/player/Roll.png',   frames: 5,  fps: 18, loop: true },
+      kneelDown: { url: 'assets/sprites/player/KneelDown.png', frames: 5, fps: 12, loop: false },
+      kneelUp:   { url: 'assets/sprites/player/KneelUp.png',   frames: 5, fps: 12, loop: false },
 
       // Light combo
       light1: { url: 'assets/sprites/player/Light1.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'light2' },
@@ -351,6 +361,7 @@
 
     const playerSprite = {
       mgr: {},
+      sizeByAnim: {},
       sprite: null,
       state: 'idle',
       sizeUnits: 2,
@@ -359,6 +370,9 @@
       animDurationMs: 0,
       loop: true
     };
+
+    const HEAL_FX_META = { url: 'assets/sprites/Heal/heal.png', frames: 6, fps: 6.6667 };
+    const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
 
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false };
@@ -377,7 +391,8 @@
       const frameH = Math.floor(sheetH / rows);
 
       // Height in world units from pixel height
-      playerSprite.sizeUnits = frameH / PPU;
+      const sizeUnits = frameH / PPU;
+      playerSprite.sizeByAnim[metaKey] = sizeUnits;
 
       // Baseline auto-detect (idle only)
       if (computeBaseline) {
@@ -391,12 +406,18 @@
       mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE; // avoid UV wrapping on odd sheets
       mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
 
-      console.log(`[Sprite] ${metaKey}: sheet ${sheetW}x${sheetH}, frames=${meta.frames}, cell ${frameW}x${frameH}, sizeUnits=${playerSprite.sizeUnits.toFixed(2)}`);
+      console.log(`[Sprite] ${metaKey}: sheet ${sheetW}x${sheetH}, frames=${meta.frames}, cell ${frameW}x${frameH}, sizeUnits=${sizeUnits.toFixed(2)}`);
       return { ok: true, mgr, frameW, frameH };
     }
 
     // Compute the center Y that puts FEET at ground (y=0)
     function feetCenterY() { return (playerSprite.sizeUnits * 0.5) - playerSprite.baselineUnits; }
+    function torsoCenterY() {
+      const size = playerSprite.sizeUnits;
+      const centerY = placeholder.position.y;
+      const feetY = centerY - (size * 0.5) + playerSprite.baselineUnits;
+      return feetY + size * HERO_TORSO_FRAC;
+    }
 
     function setAnim(name, loopOverride) {
       if (!playerSprite.sprite) return;
@@ -409,7 +430,8 @@
       old.dispose();
 
       const sp = new BABYLON.Sprite('playerSprite', mgr);
-      sp.size = playerSprite.sizeUnits;
+      const sizeUnits = playerSprite.sizeByAnim[name] ?? playerSprite.sizeUnits;
+      sp.size = sizeUnits;
       sp.position = new BABYLON.Vector3(pos.x, pos.y, 0);
       sp.invertU = facingLeft;
       const loop = (typeof loopOverride === 'boolean') ? loopOverride : !!meta.loop;
@@ -420,9 +442,79 @@
 
       playerSprite.sprite = sp;
       playerSprite.state = name;
+      playerSprite.sizeUnits = sizeUnits;
       playerSprite.loop = loop;
       playerSprite.animStarted = performance.now();
       playerSprite.animDurationMs = (meta.frames / meta.fps) * 1000;
+    }
+
+    async function initHealFx() {
+      const { ok, w: sheetW, h: sheetH } = await loadImage(HEAL_FX_META.url);
+      if (!ok) { console.warn('Heal FX sheet missing; skipping.'); return; }
+      const frameW = Math.floor(sheetW / HEAL_FX_META.frames);
+      const frameH = sheetH;
+      healFx.sizeUnits = frameH / PPU;
+      healFx.frameH = frameH;
+      healFx.animDuration = (HEAL_FX_META.frames / HEAL_FX_META.fps) * 1000;
+      const mgr = new BABYLON.SpriteManager('fx_heal', HEAL_FX_META.url, 1,
+        { width: frameW, height: frameH }, scene);
+      mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+      mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+      mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+      healFx.mgr = mgr;
+    }
+
+    function playHealFx() {
+      if (!healFx.mgr) return;
+      if (healFx.sprite) { healFx.sprite.dispose(); healFx.sprite = null; }
+      const sp = new BABYLON.Sprite('fx_heal_active', healFx.mgr);
+      sp.size = healFx.sizeUnits;
+      const torsoY = torsoCenterY();
+      sp.position = new BABYLON.Vector3(placeholder.position.x, torsoY, 0);
+      sp.playAnimation(0, HEAL_FX_META.frames - 1, false, 1000 / HEAL_FX_META.fps);
+      healFx.sprite = sp;
+      healFx.animStart = performance.now();
+    }
+
+    function stopHealFx() {
+      if (healFx.sprite) {
+        healFx.sprite.dispose();
+        healFx.sprite = null;
+      }
+      healFx.animStart = 0;
+    }
+
+    function triggerHealScreenFx() {
+      if (!healScreenEl) return;
+      if (healScreenTimer) { clearTimeout(healScreenTimer); healScreenTimer = null; }
+      healScreenEl.classList.remove('active');
+      void healScreenEl.offsetWidth;
+      healScreenEl.classList.add('active');
+      healScreenTimer = setTimeout(() => {
+        healScreenEl.classList.remove('active');
+        healScreenTimer = null;
+      }, stats.flaskSip * 1000);
+    }
+
+    function stopHealScreenFx() {
+      if (!healScreenEl) return;
+      if (healScreenTimer) { clearTimeout(healScreenTimer); healScreenTimer = null; }
+      healScreenEl.classList.remove('active');
+    }
+
+    function cleanupFlaskState({ keepActing = false } = {}) {
+      if (state.flasking) {
+        state.flasking = false;
+        state.flaskPhase = '';
+        state.flaskStart = 0;
+        state.flaskEndAt = 0;
+        state.flaskHealApplied = false;
+        state.flaskKneelDoneAt = 0;
+      }
+      stats.flaskLock = 0;
+      stopHealFx();
+      stopHealScreenFx();
+      if (!keepActing) state.acting = false;
     }
 
     async function initPlayerSprite() {
@@ -430,11 +522,14 @@
       const idleMgr = await createManagerAuto('idle', true);
       if (!idleMgr.ok) { console.warn('Idle sheet missing; keeping placeholder.'); return; }
       playerSprite.mgr.idle = idleMgr.mgr;
+      playerSprite.sizeUnits = playerSprite.sizeByAnim.idle ?? playerSprite.sizeUnits;
 
       // Movement
       const walkMgr = await createManagerAuto('walk');   if (walkMgr.ok)  playerSprite.mgr.walk  = walkMgr.mgr;
       const runMgr  = await createManagerAuto('run');    if (runMgr.ok)   playerSprite.mgr.run   = runMgr.mgr;
       const rollMgr = await createManagerAuto('roll');   if (rollMgr.ok)  playerSprite.mgr.roll  = rollMgr.mgr;
+      const kneelDMgr = await createManagerAuto('kneelDown'); if (kneelDMgr.ok) playerSprite.mgr.kneelDown = kneelDMgr.mgr;
+      const kneelUMgr = await createManagerAuto('kneelUp');   if (kneelUMgr.ok) playerSprite.mgr.kneelUp = kneelUMgr.mgr;
 
       // Ladder climb
       const cu = await createManagerAuto('climbUp');   if (cu.ok) playerSprite.mgr.climbUp = cu.mgr;
@@ -473,6 +568,7 @@
       placeholder.setEnabled(false);
     }
       initPlayerSprite();
+      initHealFx();
       createLadder(2, 0, 4);
       spawnShrine(-2, 0);
 
@@ -672,6 +768,7 @@
       // === Actions ===
     function triggerParry() {
       if (state.dead || state.blocking) return;
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.parryOpen = true;
       state.parryUntil = performance.now() + PARRY_WINDOW_MS;
 
@@ -693,31 +790,34 @@
     }
 
     function tryFlask() {
-      if (state.dead || stats.flaskCount <= 0 || state.acting) return;
+      if (state.dead || stats.flaskCount <= 0 || state.rolling || state.blocking) return;
+      if (state.acting && !state.flasking) return;
+      if (state.flasking) return;
       setFlasks(stats.flaskCount - 1);
+      const now = performance.now();
       state.acting = true;
       state.flasking = true;
-      const start = performance.now();
-      stats.flaskLock = start + stats.flaskRollCancel * 1000;
-      const sip = setInterval(() => {
-        const t = performance.now() - start;
-        if (state.rolling && performance.now() > stats.flaskLock) {
-          clearInterval(sip);
-          state.flasking = false;
-          state.acting = false;
-          return;
-        }
-        if (t >= stats.flaskSip * 1000) {
-          clearInterval(sip);
-          setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
-          state.flasking = false;
-          state.acting = false;
-        }
-      }, 10);
+      state.flaskPhase = 'kneelDown';
+      state.flaskStart = now;
+      state.flaskEndAt = now + stats.flaskSip * 1000;
+      state.flaskHealApplied = false;
+      stats.flaskLock = now + stats.flaskRollCancel * 1000;
+      if (playerSprite.mgr.kneelDown) {
+        setAnim('kneelDown', false);
+        state.flaskKneelDoneAt = playerSprite.animStarted + playerSprite.animDurationMs;
+      } else {
+        state.flaskKneelDoneAt = now;
+      }
+      playHealFx();
+      triggerHealScreenFx();
     }
 
     function startRoll() {
-      if (state.dead || state.rolling || state.acting || stats.stam < stats.rollCost) return;
+      if (state.dead || state.rolling) return;
+      const flasking = state.flasking;
+      if (state.acting && !flasking) return;
+      if (stats.stam < stats.rollCost) return;
+      if (flasking) cleanupFlaskState();
       setST(stats.stam - stats.rollCost);
       state.rolling = true; state.rollT = 0; state.iFramed = false;
       setAnim('roll', true);
@@ -729,6 +829,7 @@
       const name = stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
       const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
       if (stats.stam < stats.lightCost) return false;
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
       setST(stats.stam - stats.lightCost);
       state.flasking = false;
       state.acting = true; combo.stage = stage; combo.queued = false;
@@ -760,6 +861,7 @@
     // Hurt + Death
     function triggerHurt(dmg = 15) {
       if (state.dead) return;
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
       setHP(stats.hp - dmg);
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
@@ -769,6 +871,7 @@
     }
     function die() {
       if (state.dead) return;
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       state.blocking = false; state.parryOpen = false;
       combo.stage = 0; combo.queued = false;
@@ -823,6 +926,27 @@
       const rawDt = engine.getDeltaTime() / 1000;
       const dt = rawDt * (slowMo ? 0.25 : 1);
       const now = performance.now();
+
+      if (state.flasking) {
+        if (!state.flaskHealApplied && now >= stats.flaskLock) {
+          setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
+          state.flaskHealApplied = true;
+        }
+        if (state.flaskPhase === 'kneelDown' && now >= state.flaskKneelDoneAt) {
+          state.flaskPhase = 'channel';
+        }
+        if (state.flaskPhase !== 'kneelUp' && now >= state.flaskEndAt) {
+          state.flaskPhase = 'kneelUp';
+          stopHealFx();
+          stopHealScreenFx();
+          if (playerSprite.mgr.kneelUp) {
+            setAnim('kneelUp', false);
+            actionEndAt = performance.now() + playerSprite.animDurationMs;
+          } else {
+            cleanupFlaskState();
+          }
+        }
+      }
 
       // Ladder detection
       const ladder = ladders.find(l =>
@@ -917,6 +1041,7 @@
       // Handle generic action end (hurt, heavy, parry, death)
       if (state.acting && actionEndAt && now >= actionEndAt) {
         if (state.dead) startRespawn();
+        else if (state.flasking) cleanupFlaskState();
         else state.acting = false;
         actionEndAt = 0;
         state.parryOpen = false; // ensure parry window is closed
@@ -981,6 +1106,13 @@
         playerSprite.sprite.position.y = placeholder.position.y;
         playerSprite.sprite.invertU = (state.facing < 0);
       }
+      if (healFx.sprite) {
+        healFx.sprite.position.x = placeholder.position.x;
+        healFx.sprite.position.y = torsoCenterY();
+        if (!state.flasking && healFx.animStart && now >= healFx.animStart + healFx.animDuration) {
+          stopHealFx();
+        }
+      }
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
@@ -1007,7 +1139,7 @@
         }
       }
 
-      const allowStateMachine = !state.rolling && (!state.acting || state.flasking) && !state.dead && playerSprite.sprite;
+      const allowStateMachine = !state.rolling && !state.acting && !state.dead && playerSprite.sprite;
       if (allowStateMachine) {
         let targetAnim = 'idle';
 
