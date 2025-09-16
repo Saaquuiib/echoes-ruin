@@ -11,6 +11,7 @@
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
+  const HERO_TORSO_FRAC = 0.58;         // relative height (feet->head) where torso FX center should sit
 
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
@@ -316,6 +317,8 @@
     const flaskPips = [...document.querySelectorAll('#flasks .pip')];
     const promptEl = document.getElementById('prompt');
     const fadeEl = document.getElementById('fade');
+    const healScreenEl = document.getElementById('heal-screen');
+    let healScreenTimer = null;
     function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
     function hidePrompt() { promptEl.style.display = 'none'; }
     function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
@@ -417,6 +420,12 @@
 
     // Compute the center Y that puts FEET at ground (y=0)
     function feetCenterY() { return (playerSprite.sizeUnits * 0.5) - playerSprite.baselineUnits; }
+    function torsoCenterY() {
+      const size = playerSprite.sizeUnits;
+      const centerY = placeholder.position.y;
+      const feetY = centerY - (size * 0.5) + playerSprite.baselineUnits;
+      return feetY + size * HERO_TORSO_FRAC;
+    }
 
     function setAnim(name, loopOverride) {
       if (!playerSprite.sprite) return;
@@ -481,7 +490,6 @@
       }
       healFx.animStart = 0;
     }
-
     function initHealFlash() {
       const mesh = BABYLON.MeshBuilder.CreatePlane('healFlashPlane', { width: 1, height: 1 }, scene);
       mesh.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
