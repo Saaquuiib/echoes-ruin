@@ -282,19 +282,19 @@
     // === STATS ===
     const stats = {
       hpMax: 100, hp: 100,
-      stamMax: 100, stam: 100, stamRegenPerSec: 22, stamPauseUntil: 0,
+      stamMax: 100, stam: 100, stamRegenPerSec: 22,
       walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
       jumpVel: 8, gravity: -20, climbSpeed: 2.5,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
-      flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskMax: 3
+      flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
     };
     const state = {
       onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity, lastJumpPressAt: -Infinity,
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
-      flasking: false, flaskStartAt: 0, flaskCancelAt: 0, flaskCompleteAt: 0,
+      flasking: false,
 
       // New
       blocking: false,
@@ -311,7 +311,6 @@
     const hpFill = document.querySelector('#hp .fill');
     const stFill = document.querySelector('#stamina .fill');
     const flaskPips = [...document.querySelectorAll('#flasks .pip')];
-    let flaskFlashTimer = null;
     const promptEl = document.getElementById('prompt');
     const fadeEl = document.getElementById('fade');
     function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
@@ -319,19 +318,6 @@
     function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
     function setST(v) { stats.stam = Math.max(0, Math.min(stats.stamMax, v)); stFill.style.width = (stats.stam / stats.stamMax * 100) + '%'; }
     function setFlasks(n) { stats.flaskCount = Math.max(0, Math.min(stats.flaskMax, n)); flaskPips.forEach((p, i) => p.classList.toggle('used', i >= stats.flaskCount)); }
-    function flashFlaskFail() {
-      if (flaskFlashTimer) { clearTimeout(flaskFlashTimer); flaskFlashTimer = null; }
-      const idx = Math.max(0, stats.flaskCount - 1);
-      const pip = flaskPips[idx];
-      if (!pip) return;
-      pip.classList.remove('flash-fail');
-      void pip.offsetWidth;
-      pip.classList.add('flash-fail');
-      flaskFlashTimer = setTimeout(() => {
-        pip.classList.remove('flash-fail');
-        flaskFlashTimer = null;
-      }, 220);
-    }
     setHP(stats.hp); setST(stats.stam); setFlasks(stats.flaskCount);
 
     // === Sprite sheets ===
@@ -340,7 +326,6 @@
       walk:   { url: 'assets/sprites/player/Walk.png',   frames: 8,  fps: 12, loop: true },
       run:    { url: 'assets/sprites/player/Run.png',    frames: 8,  fps: 14, loop: true },
       roll:   { url: 'assets/sprites/player/Roll.png',   frames: 5,  fps: 18, loop: true },
-      crouch: { url: 'assets/sprites/player/Crouch.png', frames: 1,  fps: 1,  loop: true },
 
       // Light combo
       light1: { url: 'assets/sprites/player/Light1.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'light2' },
@@ -413,301 +398,6 @@
     // Compute the center Y that puts FEET at ground (y=0)
     function feetCenterY() { return (playerSprite.sizeUnits * 0.5) - playerSprite.baselineUnits; }
 
-    const healFx = (() => {
-      const data = {
-        ready: false,
-        active: false,
-        fading: false,
-        startAt: 0,
-        flaskFadeAt: 0,
-        glowBase: glow.intensity,
-        flask: { mgr: null, sprite: null, size: 0 },
-        aura: null,
-        particles: null,
-        emitter: new BABYLON.Vector3(0, 0, 0),
-        vignetteEl: document.getElementById('heal-vignette'),
-        vignetteTimer: null,
-        glowTimer: null
-      };
-
-      function clearTimer(key) {
-        if (data[key]) { clearTimeout(data[key]); data[key] = null; }
-      }
-
-      async function init() {
-        try {
-          const potion = await loadImage('assets/sprites/potions/Health.png');
-          if (potion.ok) {
-            data.flask.size = potion.h / PPU;
-            const mgr = new BABYLON.SpriteManager('heal_flask_mgr', 'assets/sprites/potions/Health.png', 2,
-              { width: potion.w, height: potion.h }, scene);
-            mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
-            mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
-            mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
-            mgr.renderingGroupId = 1;
-            data.flask.mgr = mgr;
-          }
-        } catch (err) {
-          console.warn('Heal FX: failed loading flask sprite', err);
-        }
-
-        const auraTex = new BABYLON.DynamicTexture('heal_aura_tex', { width: 256, height: 256 }, scene, false);
-        auraTex.hasAlpha = true;
-        const ctx = auraTex.getContext();
-        const grad = ctx.createRadialGradient(128, 128, 26, 128, 128, 128);
-        grad.addColorStop(0, 'rgba(255,208,140,0.85)');
-        grad.addColorStop(0.6, 'rgba(255,168,70,0.42)');
-        grad.addColorStop(1, 'rgba(255,168,70,0)');
-        ctx.clearRect(0, 0, 256, 256);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 256, 256);
-        auraTex.update();
-
-        const auraMat = new BABYLON.StandardMaterial('heal_aura_mat', scene);
-        auraMat.emissiveTexture = auraTex;
-        auraMat.opacityTexture = auraTex;
-        auraMat.disableLighting = true;
-        auraMat.backFaceCulling = false;
-        auraMat.alpha = 0;
-
-        const auraMesh = BABYLON.MeshBuilder.CreatePlane('heal_aura', { size: 1 }, scene);
-        auraMesh.material = auraMat;
-        auraMesh.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-        auraMesh.renderingGroupId = 1;
-        auraMesh.isPickable = false;
-        auraMesh.isVisible = false;
-
-        const particleTex = new BABYLON.DynamicTexture('heal_particle_tex', { width: 64, height: 64 }, scene, false);
-        particleTex.hasAlpha = true;
-        const pctx = particleTex.getContext();
-        const pgrad = pctx.createRadialGradient(32, 32, 6, 32, 32, 32);
-        pgrad.addColorStop(0, 'rgba(255,215,140,1)');
-        pgrad.addColorStop(0.55, 'rgba(255,168,70,0.85)');
-        pgrad.addColorStop(1, 'rgba(255,168,70,0)');
-        pctx.clearRect(0, 0, 64, 64);
-        pctx.fillStyle = pgrad;
-        pctx.fillRect(0, 0, 64, 64);
-        particleTex.update();
-
-        const ps = new BABYLON.ParticleSystem('heal_particles', 80, scene);
-        ps.particleTexture = particleTex;
-        ps.emitter = data.emitter;
-        ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
-        ps.minSize = 0.15;
-        ps.maxSize = 0.28;
-        ps.minLifeTime = 0.45;
-        ps.maxLifeTime = 0.6;
-        ps.emitRate = 0;
-        ps.manualEmitCount = 0;
-        ps.renderingGroupId = 1;
-        ps.gravity = new BABYLON.Vector3(0, -0.35, 0);
-        ps.startPositionFunction = (_world, position) => {
-          const angle = Math.random() * Math.PI * 2;
-          const radius = 0.08 + Math.random() * 0.12;
-          position.x = Math.cos(angle) * radius;
-          position.y = Math.sin(angle) * radius * 0.6;
-          position.z = 0;
-        };
-        ps.startDirectionFunction = (_world, direction) => {
-          const angle = Math.random() * Math.PI * 2;
-          const speed = 0.6 + Math.random() * 0.5;
-          direction.x = Math.cos(angle) * speed;
-          direction.y = Math.sin(angle) * speed;
-          direction.z = 0;
-        };
-        ps.stop();
-
-        data.aura = {
-          mesh: auraMesh,
-          mat: auraMat,
-          baseScale: 1,
-          start: 0,
-          fadeStart: 0,
-          fadeStartScale: 0,
-          fadeStartAlpha: 0,
-          fadeDur: 260
-        };
-        data.particles = ps;
-        data.ready = true;
-      }
-
-      function start(now) {
-        clearTimer('vignetteTimer');
-        clearTimer('glowTimer');
-        data.active = true;
-        data.fading = false;
-        data.startAt = now;
-        data.flaskFadeAt = now + 300;
-
-        if (data.flask.sprite) { data.flask.sprite.dispose(); data.flask.sprite = null; }
-        if (data.flask.mgr && playerSprite.sprite) {
-          const sp = new BABYLON.Sprite('heal_flask_sprite', data.flask.mgr);
-          const size = data.flask.size || (playerSprite.sizeUnits * 0.5);
-          sp.size = size;
-          sp.isPickable = false;
-          sp.position = playerSprite.sprite.position.clone();
-          sp.position.z = -0.05;
-          sp.color = new BABYLON.Color4(1, 1, 1, 1);
-          data.flask.sprite = sp;
-        }
-
-        if (data.aura && playerSprite.sprite) {
-          const aura = data.aura;
-          aura.baseScale = playerSprite.sizeUnits * 0.9;
-          aura.start = now;
-          aura.mesh.isVisible = true;
-          aura.mesh.scaling.x = aura.mesh.scaling.y = aura.baseScale * 0.5;
-          aura.mat.alpha = 0.4;
-        }
-
-        if (data.particles && playerSprite.sprite) {
-          data.emitter.x = playerSprite.sprite.position.x;
-          data.emitter.y = playerSprite.sprite.position.y + playerSprite.sizeUnits * 0.18;
-          data.emitter.z = 0;
-          data.particles.stop();
-          data.particles.reset();
-          data.particles.manualEmitCount = 0;
-          data.particles.start();
-          data.particles.manualEmitCount = 14;
-          data.particles.targetStopDuration = 0.2;
-        }
-
-        if (data.vignetteEl) data.vignetteEl.classList.add('show');
-        if (glow) glow.intensity = data.glowBase + 0.25;
-      }
-
-      function complete(now) {
-        if (data.aura) {
-          data.aura.fadeStart = now;
-          data.aura.fadeStartScale = data.aura.mesh.scaling.x;
-          data.aura.fadeStartAlpha = data.aura.mat.alpha;
-        }
-        data.active = false;
-        data.fading = true;
-        data.flaskFadeAt = now;
-
-        if (data.particles && playerSprite.sprite) {
-          data.emitter.x = playerSprite.sprite.position.x;
-          data.emitter.y = playerSprite.sprite.position.y + playerSprite.sizeUnits * 0.2;
-          data.emitter.z = 0;
-          data.particles.stop();
-          data.particles.reset();
-          data.particles.manualEmitCount = 0;
-          data.particles.start();
-          data.particles.manualEmitCount = 18;
-          data.particles.targetStopDuration = 0.28;
-        }
-
-        if (data.vignetteEl) {
-          clearTimer('vignetteTimer');
-          data.vignetteTimer = setTimeout(() => {
-            data.vignetteEl.classList.remove('show');
-            data.vignetteTimer = null;
-          }, 220);
-        }
-
-        if (glow) {
-          clearTimer('glowTimer');
-          data.glowTimer = setTimeout(() => {
-            glow.intensity = data.glowBase;
-            data.glowTimer = null;
-          }, 240);
-        }
-      }
-
-      function cancel() {
-        data.active = false;
-        data.fading = false;
-        data.startAt = 0;
-        data.flaskFadeAt = 0;
-        if (data.flask.sprite) { data.flask.sprite.dispose(); data.flask.sprite = null; }
-        if (data.aura) {
-          data.aura.mat.alpha = 0;
-          data.aura.mesh.isVisible = false;
-        }
-        if (data.particles) {
-          data.particles.stop();
-          data.particles.reset();
-        }
-        if (data.vignetteEl) {
-          clearTimer('vignetteTimer');
-          data.vignetteEl.classList.remove('show');
-        }
-        if (glow) {
-          clearTimer('glowTimer');
-          glow.intensity = data.glowBase;
-        }
-      }
-
-      function update(now) {
-        if (!playerSprite.sprite) return;
-
-        if (data.flask.sprite) {
-          const facing = state.facing < 0 ? -1 : 1;
-          const offsetX = playerSprite.sizeUnits * 0.3 * facing;
-          const offsetY = playerSprite.sizeUnits * 0.2;
-          data.flask.sprite.position.x = playerSprite.sprite.position.x + offsetX;
-          data.flask.sprite.position.y = playerSprite.sprite.position.y + offsetY;
-          data.flask.sprite.position.z = -0.05;
-          data.flask.sprite.invertU = (facing < 0);
-          if (data.flaskFadeAt) {
-            const fadeT = (now - data.flaskFadeAt) / 180;
-            if (fadeT >= 0) {
-              const alpha = Math.max(0, 1 - Math.min(1, fadeT));
-              data.flask.sprite.color.a = alpha;
-              if (alpha <= 0.01) {
-                data.flask.sprite.dispose();
-                data.flask.sprite = null;
-                data.flaskFadeAt = 0;
-              }
-            }
-          }
-        }
-
-        if (data.aura && (data.active || data.fading)) {
-          const aura = data.aura;
-          const mesh = aura.mesh;
-          const mat = aura.mat;
-          mesh.position.x = playerSprite.sprite.position.x;
-          mesh.position.y = playerSprite.sprite.position.y + playerSprite.sizeUnits * 0.18;
-          mesh.position.z = -0.06;
-
-          if (data.active) {
-            const elapsed = now - aura.start;
-            const progress = Math.min(1, Math.max(0, elapsed / 600));
-            const eased = 1 - Math.cos(progress * Math.PI * 0.5);
-            const scale = aura.baseScale * (0.5 + (1.3 - 0.5) * eased);
-            mesh.scaling.x = mesh.scaling.y = scale;
-            const pulse = 0.45 + 0.25 * Math.sin(elapsed / 95);
-            mat.alpha = Math.min(0.8, Math.max(0.3, pulse));
-          }
-
-          if (data.fading) {
-            const fadeElapsed = now - aura.fadeStart;
-            const fadeProgress = Math.min(1, Math.max(0, fadeElapsed / aura.fadeDur));
-            const scale = aura.fadeStartScale * (1 - 0.35 * fadeProgress);
-            mesh.scaling.x = mesh.scaling.y = scale;
-            mat.alpha = aura.fadeStartAlpha * (1 - fadeProgress);
-            if (fadeProgress >= 1) {
-              mat.alpha = 0;
-              mesh.isVisible = false;
-              data.fading = false;
-              if (glow) glow.intensity = data.glowBase;
-            }
-          } else {
-            mesh.isVisible = true;
-          }
-        }
-
-        if (data.particles && (data.active || data.fading)) {
-          data.emitter.x = playerSprite.sprite.position.x;
-          data.emitter.y = playerSprite.sprite.position.y + playerSprite.sizeUnits * 0.18;
-        }
-      }
-
-      return { init, start, complete, cancel, update };
-    })();
-
     function setAnim(name, loopOverride) {
       if (!playerSprite.sprite) return;
       const meta = SHEETS[name]; if (!meta) return;
@@ -745,7 +435,6 @@
       const walkMgr = await createManagerAuto('walk');   if (walkMgr.ok)  playerSprite.mgr.walk  = walkMgr.mgr;
       const runMgr  = await createManagerAuto('run');    if (runMgr.ok)   playerSprite.mgr.run   = runMgr.mgr;
       const rollMgr = await createManagerAuto('roll');   if (rollMgr.ok)  playerSprite.mgr.roll  = rollMgr.mgr;
-      const crouchMgr = await createManagerAuto('crouch'); if (crouchMgr.ok) playerSprite.mgr.crouch = crouchMgr.mgr;
 
       // Ladder climb
       const cu = await createManagerAuto('climbUp');   if (cu.ok) playerSprite.mgr.climbUp = cu.mgr;
@@ -784,7 +473,6 @@
       placeholder.setEnabled(false);
     }
       initPlayerSprite();
-      healFx.init();
       createLadder(2, 0, 4);
       spawnShrine(-2, 0);
 
@@ -984,10 +672,10 @@
       // === Actions ===
     function triggerParry() {
       if (state.dead || state.blocking) return;
-      cancelFlask('interrupt', { keepActing: true, skipFlash: true });
       state.parryOpen = true;
       state.parryUntil = performance.now() + PARRY_WINDOW_MS;
 
+      state.flasking = false;
       state.acting = true; // prevent the state machine from swapping parry out
       if (playerSprite.mgr.parry) setAnim('parry', false);
       actionEndAt = performance.now() + PARRY_WINDOW_MS;
@@ -1005,36 +693,34 @@
     }
 
     function tryFlask() {
-      if (state.dead || stats.flaskCount <= 0 || state.acting || !state.onGround) return;
-      if (!playerSprite.sprite) return;
-      const now = performance.now();
+      if (state.dead || stats.flaskCount <= 0 || state.acting) return;
+      setFlasks(stats.flaskCount - 1);
       state.acting = true;
       state.flasking = true;
-      state.flaskStartAt = now;
-      state.flaskCancelAt = now + stats.flaskRollCancel * 1000;
-      state.flaskCompleteAt = now + stats.flaskSip * 1000;
-      if (playerSprite.mgr.crouch) setAnim('crouch', true);
-      healFx.start(now);
-    }
-
-    function cancelFlask(reason = 'interrupt', opts = {}) {
-      if (!state.flasking) return false;
-      state.flasking = false;
-      state.flaskStartAt = 0;
-      state.flaskCancelAt = 0;
-      state.flaskCompleteAt = 0;
-      if (!opts.keepActing) state.acting = false;
-      healFx.cancel();
-      if (reason === 'roll' && !opts.skipFlash) flashFlaskFail();
-      return true;
+      const start = performance.now();
+      stats.flaskLock = start + stats.flaskRollCancel * 1000;
+      const sip = setInterval(() => {
+        const t = performance.now() - start;
+        if (state.rolling && performance.now() > stats.flaskLock) {
+          clearInterval(sip);
+          state.flasking = false;
+          state.acting = false;
+          return;
+        }
+        if (t >= stats.flaskSip * 1000) {
+          clearInterval(sip);
+          setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
+          state.flasking = false;
+          state.acting = false;
+        }
+      }, 10);
     }
 
     function startRoll() {
-      if (state.dead || state.rolling || state.acting || stats.stam < stats.rollCost) return false;
+      if (state.dead || state.rolling || state.acting || stats.stam < stats.rollCost) return;
       setST(stats.stam - stats.rollCost);
       state.rolling = true; state.rollT = 0; state.iFramed = false;
       setAnim('roll', true);
-      return true;
     }
 
     // Light combo
@@ -1043,8 +729,8 @@
       const name = stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
       const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
       if (stats.stam < stats.lightCost) return false;
-      cancelFlask('interrupt', { skipFlash: true });
       setST(stats.stam - stats.lightCost);
+      state.flasking = false;
       state.acting = true; combo.stage = stage; combo.queued = false;
       setAnim(name, false);
       const now = performance.now();
@@ -1063,8 +749,8 @@
       if (state.dead || state.rolling || state.acting || state.blocking) return;
       if (!playerSprite.mgr.heavy) return;
       if (stats.stam < stats.heavyCost) return;
-      cancelFlask('interrupt', { skipFlash: true });
       setST(stats.stam - stats.heavyCost);
+      state.flasking = false;
       state.acting = true;
       combo.stage = 0; combo.queued = false;
       setAnim('heavy', false);
@@ -1074,16 +760,15 @@
     // Hurt + Death
     function triggerHurt(dmg = 15) {
       if (state.dead) return;
-      cancelFlask('interrupt', { keepActing: true, skipFlash: true });
       setHP(stats.hp - dmg);
       if (stats.hp <= 0) { die(); return; }
+      state.flasking = false;
       state.acting = true; combo.stage = 0; combo.queued = false;
       setAnim('hurt', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
     function die() {
       if (state.dead) return;
-      cancelFlask('interrupt', { keepActing: true, skipFlash: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       state.blocking = false; state.parryOpen = false;
       combo.stage = 0; combo.queued = false;
@@ -1098,11 +783,6 @@
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
-        stats.stamPauseUntil = 0;
-        state.flaskStartAt = 0;
-        state.flaskCancelAt = 0;
-        state.flaskCompleteAt = 0;
-        healFx.cancel();
         state.dead = false; state.acting = false; state.flasking = false;
         setAnim('idle', true);
         playerSprite.sprite.position.x = placeholder.position.x;
@@ -1204,19 +884,7 @@
       }
 
       // Roll
-      if (Keys.roll) {
-        const rollNow = performance.now();
-        if (state.flasking) {
-          const cancelReady = rollNow >= state.flaskCancelAt;
-          const canRoll = !state.dead && !state.rolling && stats.stam >= stats.rollCost;
-          if (cancelReady && canRoll && cancelFlask('roll')) {
-            startRoll();
-          }
-        } else {
-          startRoll();
-        }
-        Keys.roll = false;
-      }
+      if (Keys.roll) { startRoll(); Keys.roll = false; }
       if (state.rolling) {
         state.rollT += dt;
         state.vx = state.facing * stats.rollSpeed;
@@ -1234,19 +902,6 @@
 
       // Parry window close
       if (state.parryOpen && now > state.parryUntil) state.parryOpen = false;
-
-      // Flask completion
-      if (state.flasking && state.flaskCompleteAt && now >= state.flaskCompleteAt) {
-        setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
-        setFlasks(stats.flaskCount - 1);
-        stats.stamPauseUntil = now + 500;
-        state.flasking = false;
-        state.acting = false;
-        state.flaskStartAt = 0;
-        state.flaskCancelAt = 0;
-        state.flaskCompleteAt = 0;
-        healFx.complete(now);
-      }
 
       // Handle light combo progression
       if (combo.stage > 0 && now >= combo.endAt) {
@@ -1356,9 +1011,7 @@
       if (allowStateMachine) {
         let targetAnim = 'idle';
 
-        if (state.flasking && playerSprite.mgr.crouch) {
-          targetAnim = 'crouch';
-        } else if (landingActive) {
+        if (landingActive) {
           targetAnim = 'landing';
         } else if (state.blocking) {
           targetAnim = 'block'; // override while holding block
@@ -1386,12 +1039,9 @@
 
       // Stamina regen (disabled during actions/roll/death)
       const busy = state.rolling || state.acting || state.dead;
-      if (!busy && stats.stam < stats.stamMax && now >= stats.stamPauseUntil) {
-        setST(stats.stam + stats.stamRegenPerSec * dt);
-      }
+      if (!busy && stats.stam < stats.stamMax) setST(stats.stam + stats.stamRegenPerSec * dt);
       updateEnemies(dt);
       updateOverlay();
-      healFx.update(now);
       scene.render();
     });
 

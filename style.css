@@ -15,17 +15,6 @@ html, body { height:100%; margin:0; background:#000; }
 #flasks { display:flex; gap:6px; margin-top:6px; }
 .pip { width:10px; height:10px; border:1px solid #C1B158; }
 .pip.used { background:#5a5337; border-color:#5a5337; }
-.pip.flash-fail {
-  background:#6d2020;
-  border-color:#ff6464;
-  animation:pip-flash-fail 0.2s ease-in-out;
-}
-#flasks .pip.flash-fail { color:#fff; }
-@keyframes pip-flash-fail {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.35); }
-  100% { transform: scale(1); }
-}
 #prompt { margin-top:6px; }
 
 /* Overlay + key hint */
@@ -40,16 +29,6 @@ html, body { height:100%; margin:0; background:#000; }
   transition:opacity 0.5s; z-index:10000;
 }
 #fade.show { opacity:1; }
-#heal-vignette {
-  position:fixed; left:0; top:0; width:100vw; height:100vh;
-  pointer-events:none;
-  background:radial-gradient(circle at 50% 45%, rgba(255,214,164,0.0) 0%, rgba(255,194,140,0.18) 38%, rgba(100,46,10,0.22) 100%);
-  opacity:0;
-  transition:opacity 0.2s ease-out;
-  mix-blend-mode:screen;
-  z-index:800;
-}
-#heal-vignette.show { opacity:0.28; }
 .badge {
   position: fixed; right: 12px; top: 12px; background: rgba(0,0,0,.55);
   border: 1px solid #333; color:#E3D7B7; padding:6px 8px; font:12px monospace; z-index:1000;
