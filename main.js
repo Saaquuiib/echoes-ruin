@@ -296,11 +296,9 @@
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
       flasking: false,
-      flaskPhase: '',
       flaskStart: 0,
       flaskEndAt: 0,
       flaskHealApplied: false,
-      flaskKneelDoneAt: 0,
 
       // New
       blocking: false,
@@ -373,6 +371,16 @@
 
     const HEAL_FX_META = { url: 'assets/sprites/Heal/heal.png', frames: 6, fps: 6.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
+    const healFlash = {
+      mesh: null,
+      mat: null,
+      active: false,
+      start: 0,
+      end: 0,
+      maxAlpha: 0.45,
+      fadeIn: 150,
+      fadeOut: 220
+    };
 
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false };
@@ -469,8 +477,7 @@
       if (healFx.sprite) { healFx.sprite.dispose(); healFx.sprite = null; }
       const sp = new BABYLON.Sprite('fx_heal_active', healFx.mgr);
       sp.size = healFx.sizeUnits;
-      const torsoY = torsoCenterY();
-      sp.position = new BABYLON.Vector3(placeholder.position.x, torsoY, 0);
+      sp.position = new BABYLON.Vector3(placeholder.position.x, placeholder.position.y, 0);
       sp.playAnimation(0, HEAL_FX_META.frames - 1, false, 1000 / HEAL_FX_META.fps);
       healFx.sprite = sp;
       healFx.animStart = performance.now();
@@ -483,37 +490,87 @@
       }
       healFx.animStart = 0;
     }
-
-    function triggerHealScreenFx() {
-      if (!healScreenEl) return;
-      if (healScreenTimer) { clearTimeout(healScreenTimer); healScreenTimer = null; }
-      healScreenEl.classList.remove('active');
-      void healScreenEl.offsetWidth;
-      healScreenEl.classList.add('active');
-      healScreenTimer = setTimeout(() => {
-        healScreenEl.classList.remove('active');
-        healScreenTimer = null;
-      }, stats.flaskSip * 1000);
+    function initHealFlash() {
+      const mesh = BABYLON.MeshBuilder.CreatePlane('healFlashPlane', { width: 1, height: 1 }, scene);
+      mesh.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+      mesh.isPickable = false;
+      mesh.position.z = -0.01;
+      mesh.renderingGroupId = 1;
+      mesh.setEnabled(false);
+      const mat = new BABYLON.StandardMaterial('healFlashMat', scene);
+      mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+      mat.disableLighting = true;
+      mat.alpha = 0;
+      mat.backFaceCulling = false;
+      mat.disableDepthWrite = true;
+      mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+      mesh.material = mat;
+      healFlash.mesh = mesh;
+      healFlash.mat = mat;
     }
 
-    function stopHealScreenFx() {
-      if (!healScreenEl) return;
-      if (healScreenTimer) { clearTimeout(healScreenTimer); healScreenTimer = null; }
-      healScreenEl.classList.remove('active');
+    function playHealFlash() {
+      if (!healFlash.mesh) return;
+      const now = performance.now();
+      healFlash.active = true;
+      healFlash.start = now;
+      healFlash.end = now + stats.flaskSip * 1000;
+      healFlash.mat.alpha = 0;
+      healFlash.mesh.setEnabled(true);
     }
 
-    function cleanupFlaskState({ keepActing = false } = {}) {
+    function stopHealFlash() {
+      if (!healFlash.mesh) return;
+      healFlash.active = false;
+      healFlash.mesh.setEnabled(false);
+      if (healFlash.mat) healFlash.mat.alpha = 0;
+      healFlash.start = 0;
+      healFlash.end = 0;
+    }
+
+    function updateHealFlash(now) {
+      if (!healFlash.mesh) return;
+      if (!healFlash.mat) return;
+      healFlash.mesh.position.x = placeholder.position.x;
+      healFlash.mesh.position.y = placeholder.position.y;
+      const size = playerSprite.sizeUnits || 1.8;
+      healFlash.mesh.scaling.x = size * 0.55;
+      healFlash.mesh.scaling.y = size * 1.05;
+      if (!healFlash.active) return;
+      if (now >= healFlash.end) {
+        stopHealFlash();
+        return;
+      }
+      const total = healFlash.end - healFlash.start;
+      if (total <= 0) {
+        stopHealFlash();
+        return;
+      }
+      const t = now - healFlash.start;
+      const fadeIn = healFlash.fadeIn;
+      const fadeOut = healFlash.fadeOut;
+      let alpha = healFlash.maxAlpha;
+      if (t < fadeIn) {
+        alpha = healFlash.maxAlpha * (t / fadeIn);
+      } else if (t > total - fadeOut) {
+        const remain = Math.max(0, total - t);
+        alpha = healFlash.maxAlpha * (remain / fadeOut);
+      }
+      healFlash.mat.alpha = Math.max(0, Math.min(healFlash.maxAlpha, alpha));
+    }
+
+    function cleanupFlaskState({ keepActing = false, stopFx = true } = {}) {
       if (state.flasking) {
         state.flasking = false;
-        state.flaskPhase = '';
         state.flaskStart = 0;
         state.flaskEndAt = 0;
         state.flaskHealApplied = false;
-        state.flaskKneelDoneAt = 0;
       }
       stats.flaskLock = 0;
-      stopHealFx();
-      stopHealScreenFx();
+      if (stopFx) {
+        stopHealFx();
+        stopHealFlash();
+      }
       if (!keepActing) state.acting = false;
     }
 
@@ -569,6 +626,7 @@
     }
       initPlayerSprite();
       initHealFx();
+      initHealFlash();
       createLadder(2, 0, 4);
       spawnShrine(-2, 0);
 
@@ -797,19 +855,13 @@
       const now = performance.now();
       state.acting = true;
       state.flasking = true;
-      state.flaskPhase = 'kneelDown';
       state.flaskStart = now;
       state.flaskEndAt = now + stats.flaskSip * 1000;
       state.flaskHealApplied = false;
       stats.flaskLock = now + stats.flaskRollCancel * 1000;
-      if (playerSprite.mgr.kneelDown) {
-        setAnim('kneelDown', false);
-        state.flaskKneelDoneAt = playerSprite.animStarted + playerSprite.animDurationMs;
-      } else {
-        state.flaskKneelDoneAt = now;
-      }
+      if (playerSprite.mgr.idle) setAnim('idle', true);
       playHealFx();
-      triggerHealScreenFx();
+      playHealFlash();
     }
 
     function startRoll() {
@@ -817,7 +869,10 @@
       const flasking = state.flasking;
       if (state.acting && !flasking) return;
       if (stats.stam < stats.rollCost) return;
-      if (flasking) cleanupFlaskState();
+      if (flasking) {
+        if (!state.flaskHealApplied) return;
+        cleanupFlaskState();
+      }
       setST(stats.stam - stats.rollCost);
       state.rolling = true; state.rollT = 0; state.iFramed = false;
       setAnim('roll', true);
@@ -932,19 +987,8 @@
           setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
           state.flaskHealApplied = true;
         }
-        if (state.flaskPhase === 'kneelDown' && now >= state.flaskKneelDoneAt) {
-          state.flaskPhase = 'channel';
-        }
-        if (state.flaskPhase !== 'kneelUp' && now >= state.flaskEndAt) {
-          state.flaskPhase = 'kneelUp';
-          stopHealFx();
-          stopHealScreenFx();
-          if (playerSprite.mgr.kneelUp) {
-            setAnim('kneelUp', false);
-            actionEndAt = performance.now() + playerSprite.animDurationMs;
-          } else {
-            cleanupFlaskState();
-          }
+        if (now >= state.flaskEndAt) {
+          cleanupFlaskState({ stopFx: false });
         }
       }
 
@@ -1108,11 +1152,12 @@
       }
       if (healFx.sprite) {
         healFx.sprite.position.x = placeholder.position.x;
-        healFx.sprite.position.y = torsoCenterY();
+        healFx.sprite.position.y = placeholder.position.y;
         if (!state.flasking && healFx.animStart && now >= healFx.animStart + healFx.animDuration) {
           stopHealFx();
         }
       }
+      updateHealFlash(now);
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
