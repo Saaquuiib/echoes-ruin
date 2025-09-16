@@ -1,1 +1,4 @@
 assets/sprites/Campfire/CampFire.png filter=lfs diff=lfs merge=lfs -text
+assets/sprites/Campfire/Fire.png filter=lfs diff=lfs merge=lfs -text
+assets/sprites/Campfire/Log.png filter=lfs diff=lfs merge=lfs -text
+assets/sprites/Campfire/Smoke.png filter=lfs diff=lfs merge=lfs -text
