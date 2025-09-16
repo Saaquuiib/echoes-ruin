@@ -288,6 +288,7 @@
       onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity,
       rolling: false, rollT: 0, iFramed: false,
       acting: false, facing: 1, dead: false,
+      flasking: false,
 
       // New
       blocking: false,
@@ -662,6 +663,7 @@
       state.parryOpen = true;
       state.parryUntil = performance.now() + PARRY_WINDOW_MS;
 
+      state.flasking = false;
       state.acting = true; // prevent the state machine from swapping parry out
       if (playerSprite.mgr.parry) setAnim('parry', false);
       actionEndAt = performance.now() + PARRY_WINDOW_MS;
@@ -682,12 +684,23 @@
       if (state.dead || stats.flaskCount <= 0 || state.acting) return;
       setFlasks(stats.flaskCount - 1);
       state.acting = true;
+      state.flasking = true;
       const start = performance.now();
       stats.flaskLock = start + stats.flaskRollCancel * 1000;
       const sip = setInterval(() => {
         const t = performance.now() - start;
-        if (state.rolling && performance.now() > stats.flaskLock) { clearInterval(sip); state.acting = false; return; }
-        if (t >= stats.flaskSip * 1000) { clearInterval(sip); setHP(stats.hp + stats.hpMax * stats.flaskHealPct); state.acting = false; }
+        if (state.rolling && performance.now() > stats.flaskLock) {
+          clearInterval(sip);
+          state.flasking = false;
+          state.acting = false;
+          return;
+        }
+        if (t >= stats.flaskSip * 1000) {
+          clearInterval(sip);
+          setHP(stats.hp + stats.hpMax * stats.flaskHealPct);
+          state.flasking = false;
+          state.acting = false;
+        }
       }, 10);
     }
 
@@ -705,6 +718,7 @@
       const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
       if (stats.stam < stats.lightCost) return false;
       setST(stats.stam - stats.lightCost);
+      state.flasking = false;
       state.acting = true; combo.stage = stage; combo.queued = false;
       setAnim(name, false);
       const now = performance.now();
@@ -724,6 +738,7 @@
       if (!playerSprite.mgr.heavy) return;
       if (stats.stam < stats.heavyCost) return;
       setST(stats.stam - stats.heavyCost);
+      state.flasking = false;
       state.acting = true;
       combo.stage = 0; combo.queued = false;
       setAnim('heavy', false);
@@ -735,13 +750,14 @@
       if (state.dead) return;
       setHP(stats.hp - dmg);
       if (stats.hp <= 0) { die(); return; }
+      state.flasking = false;
       state.acting = true; combo.stage = 0; combo.queued = false;
       setAnim('hurt', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
     function die() {
       if (state.dead) return;
-      state.dead = true; state.acting = true; state.vx = 0; state.vy = 0;
+      state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       state.blocking = false; state.parryOpen = false;
       combo.stage = 0; combo.queued = false;
       setAnim('death', false);
@@ -755,7 +771,7 @@
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
-        state.dead = false; state.acting = false;
+        state.dead = false; state.acting = false; state.flasking = false;
         setAnim('idle', true);
         playerSprite.sprite.position.x = placeholder.position.x;
         playerSprite.sprite.position.y = placeholder.position.y;
@@ -925,8 +941,9 @@
       shadow.scaling.x = playerSprite.sizeUnits * 0.6 * shrink;
       shadow.scaling.z = playerSprite.sizeUnits * 0.35 * shrink;
 
-      // Animation state machine (if NOT acting/rolling/dead)
-      if (!state.rolling && !state.acting && !state.dead && playerSprite.sprite) {
+      // Animation state machine (skip while rolling/dead/other actions)
+      const allowStateMachine = !state.rolling && (!state.acting || state.flasking) && !state.dead && playerSprite.sprite;
+      if (allowStateMachine) {
         let targetAnim = 'idle';
 
         if (state.blocking) {
