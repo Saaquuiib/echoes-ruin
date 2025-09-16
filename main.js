@@ -294,7 +294,9 @@
       blocking: false,
       parryOpen: false,
       parryUntil: 0,
-      climbing: false
+      climbing: false,
+      landing: false,
+      landingUntil: 0
     };
 
     // === HUD refs ===
@@ -325,6 +327,7 @@
       // Air & heavy
       jump:   { url: 'assets/sprites/player/Jump.png',   frames: 3,  fps: 16, loop: true },
       fall:   { url: 'assets/sprites/player/Fall.png',   frames: 3,  fps: 16, loop: true },
+      landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 20, loop: false },
       climbUp:   { url: 'assets/sprites/player/LadderUp.png',   frames: 7, fps: 12, loop: true },
       climbDown: { url: 'assets/sprites/player/LadderDown.png', frames: 7, fps: 12, loop: true },
       heavy:  { url: 'assets/sprites/player/Heavy.png',  frames: 6,  fps: 12, loop: false },
@@ -435,8 +438,9 @@
       const l3 = await createManagerAuto('light3'); if (l3.ok) playerSprite.mgr.light3 = l3.mgr;
 
       // Air & heavy
-      const j  = await createManagerAuto('jump');  if (j.ok)  playerSprite.mgr.jump  = j.mgr;
-      const f  = await createManagerAuto('fall');  if (f.ok)  playerSprite.mgr.fall  = f.mgr;
+      const j  = await createManagerAuto('jump');    if (j.ok)  playerSprite.mgr.jump    = j.mgr;
+      const f  = await createManagerAuto('fall');    if (f.ok)  playerSprite.mgr.fall    = f.mgr;
+      const la = await createManagerAuto('landing'); if (la.ok) playerSprite.mgr.landing = la.mgr;
       const hv = await createManagerAuto('heavy'); if (hv.ok) playerSprite.mgr.heavy = hv.mgr;
 
       // Hurt + Death
@@ -905,12 +909,16 @@
       }
 
       // Physics (drive placeholder)
+      const wasOnGround = state.onGround;
+      let vyBefore = state.vy;
       if (!state.dead) {
         if (state.climbing) {
+          vyBefore = state.vy;
           placeholder.position.x += state.vx * dt;
           placeholder.position.y += state.vy * dt;
         } else {
           state.vy += stats.gravity * dt;
+          vyBefore = state.vy;
           placeholder.position.x += state.vx * dt;
           placeholder.position.y += state.vy * dt;
         }
@@ -918,13 +926,27 @@
 
       // Ground clamp (feet at y=0 => center at feetCenterY)
       const groundCenter = feetCenterY();
+      let justLanded = false;
       if (placeholder.position.y <= groundCenter) {
         placeholder.position.y = groundCenter;
         if (!state.onGround) state.lastGrounded = now;
         state.onGround = true;
         if (state.vy < 0) state.vy = 0;
+        justLanded = !wasOnGround;
       } else {
         state.onGround = false;
+      }
+
+      if (justLanded) {
+        const landingMeta = SHEETS.landing;
+        const falling = vyBefore < -0.2;
+        const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
+          !state.rolling && (!state.acting || state.flasking) && !state.blocking && !state.dead;
+        if (canTriggerLanding) {
+          state.landing = true;
+          setAnim('landing', false);
+          state.landingUntil = now + (landingMeta.frames / landingMeta.fps) * 1000;
+        }
       }
 
       // Drive sprite from placeholder
@@ -942,11 +964,23 @@
       shadow.scaling.z = playerSprite.sizeUnits * 0.35 * shrink;
 
       // Animation state machine (skip while rolling/dead/other actions)
+      let landingActive = false;
+      if (state.landing) {
+        const stillLanding = state.onGround && !state.blocking && now < state.landingUntil;
+        if (stillLanding) landingActive = true;
+        else {
+          state.landing = false;
+          state.landingUntil = 0;
+        }
+      }
+
       const allowStateMachine = !state.rolling && (!state.acting || state.flasking) && !state.dead && playerSprite.sprite;
       if (allowStateMachine) {
         let targetAnim = 'idle';
 
-        if (state.blocking) {
+        if (landingActive) {
+          targetAnim = 'landing';
+        } else if (state.blocking) {
           targetAnim = 'block'; // override while holding block
         } else if (state.climbing) {
           if (state.vy > 0.15) targetAnim = 'climbUp';
@@ -960,7 +994,10 @@
           targetAnim = moving ? (Keys.runHold ? 'run' : 'walk') : 'idle';
         }
 
-        if (playerSprite.state !== targetAnim) setAnim(targetAnim, true);
+        if (playerSprite.state !== targetAnim) {
+          const loopOverride = (targetAnim === 'landing') ? false : true;
+          setAnim(targetAnim, loopOverride);
+        }
       }
 
       // Camera follow (x only)
