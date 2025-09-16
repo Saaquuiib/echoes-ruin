@@ -9,6 +9,7 @@
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const PARRY_WINDOW_MS = 120;          // parry window + parry anim duration
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
+  const LANDING_MIN_GROUNDED_MS = 1;    // delay landing anim until on-ground persisted into next frame
 
   // Ensure CSS (fallback if external fails)
   (function ensureCss() {
@@ -296,6 +297,7 @@
       parryUntil: 0,
       climbing: false,
       landing: false,
+      landingStartAt: 0,
       landingUntil: 0
     };
 
@@ -945,9 +947,10 @@
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
           !state.rolling && (!state.acting || state.flasking) && !state.blocking && !state.dead && !jumpBuffered;
         if (canTriggerLanding) {
+          const dur = (landingMeta.frames / landingMeta.fps) * 1000;
           state.landing = true;
-          setAnim('landing', false);
-          state.landingUntil = now + (landingMeta.frames / landingMeta.fps) * 1000;
+          state.landingStartAt = now + LANDING_MIN_GROUNDED_MS;
+          state.landingUntil = state.landingStartAt + dur;
         }
       }
 
@@ -968,11 +971,13 @@
       // Animation state machine (skip while rolling/dead/other actions)
       let landingActive = false;
       if (state.landing) {
-        const stillLanding = state.onGround && !state.blocking && now < state.landingUntil;
-        if (stillLanding) landingActive = true;
-        else {
+        const eligibleNow = state.onGround && !state.blocking && now < state.landingUntil;
+        if (!eligibleNow) {
           state.landing = false;
+          state.landingStartAt = 0;
           state.landingUntil = 0;
+        } else if (now >= state.landingStartAt) {
+          landingActive = true;
         }
       }
 
