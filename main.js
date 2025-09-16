@@ -327,7 +327,7 @@
       // Air & heavy
       jump:   { url: 'assets/sprites/player/Jump.png',   frames: 3,  fps: 16, loop: true },
       fall:   { url: 'assets/sprites/player/Fall.png',   frames: 3,  fps: 16, loop: true },
-      landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 20, loop: false },
+      landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 16, loop: false },
       climbUp:   { url: 'assets/sprites/player/LadderUp.png',   frames: 7, fps: 12, loop: true },
       climbDown: { url: 'assets/sprites/player/LadderDown.png', frames: 7, fps: 12, loop: true },
       heavy:  { url: 'assets/sprites/player/Heavy.png',  frames: 6,  fps: 12, loop: false },
