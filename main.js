@@ -1813,7 +1813,58 @@
         e.animStart = performance.now();
         e.animDur = (meta.frames / meta.fps) * 1000;
       }
-
+      function startBatDive(e, now, playerX, playerY) {
+        const attackDef = BAT_ATTACK_DATA.dive;
+        if (!attackDef) return false;
+        const clampMin = e.patrolMin ?? (e.homeX - 3);
+        const clampMax = e.patrolMax ?? (e.homeX + 3);
+        const startX = e.x;
+        const startY = e.y;
+        const followX = attackDef.followX ?? 4.6;
+        const followY = attackDef.followY ?? 3.2;
+        const limitedDx = Math.max(-followX, Math.min(followX, playerX - startX));
+        const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+        let targetX = startX + limitedDx;
+        if (Number.isFinite(clampMin)) targetX = Math.max(clampMin + edgePad, targetX);
+        if (Number.isFinite(clampMax)) targetX = Math.min(clampMax - edgePad, targetX);
+        const floorCenter = centerFromFoot(e, -0.08);
+        const maxDrop = Math.max(0.25, Math.min(followY, startY - floorCenter));
+        let drop = startY - Math.min(playerY, startY - 0.2);
+        if (!Number.isFinite(drop) || drop <= 0.15) drop = 0.3;
+        drop = Math.min(drop, maxDrop);
+        drop = Math.max(Math.min(maxDrop, 0.25), drop);
+        let targetY = startY - drop;
+        if (targetY < floorCenter) targetY = floorCenter;
+        const travelMs = attackDef.travelMs ?? 520;
+        const hitFrac = Math.max(0.55, Math.min(0.92, attackDef.hitFrac ?? 0.78));
+        const waveBase = attackDef.waveAmp ?? 0.78;
+        const horizontalSpan = Math.abs(targetX - startX);
+        const waveAmp = Math.min(waveBase * 1.6, Math.max(waveBase * 0.45, horizontalSpan * 0.55 + 0.12));
+        const waveDir = (targetX >= startX) ? 1 : -1;
+        e.state = 'attack';
+        e.attackDidSpawn = false;
+        e.dive = {
+          startTime: now,
+          duration: travelMs,
+          startX,
+          startY,
+          targetX,
+          targetY,
+          waveAmp,
+          waveDir,
+          hitFrac
+        };
+        e.rebound = null;
+        e.attackHitAt = now + travelMs * hitFrac;
+        e.attackEndAt = now + travelMs;
+        e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
+        e.vx = 0;
+        e.vy = 0;
+        e.facing = waveDir >= 0 ? 1 : -1;
+        if (e.mgr.attack) setEnemyAnim(e, attackDef.anim || 'attack');
+        e.comboRemaining = Math.max(0, e.comboRemaining - 1);
+        return true;
+      }
       function finalizeWolfDeath(e, now = performance.now()) {
         if (!e || e.dead) return;
         e.pendingLandingState = null;
@@ -1841,7 +1892,8 @@
         e.vy = 0;
         e.deathAt = e.deathAt || now;
         e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
-        e.attackPath = null;
+        e.dive = null;
+        e.rebound = null;
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
 
@@ -1994,10 +2046,10 @@
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           alignToFoot: false,
-          engageRangeX: 6.2, attackRangeX: 4.4, disengageRangeX: 7.8, wakeRange: 5.0,
+          engageRangeX: 6.2, engageRangeY: 3.4, attackRangeX: 4.4, disengageRangeX: 7.8, wakeRange: 5.0,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
           comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
-          attackDidSpawn: false, attackPath: null, reboundTarget: { x, y: 0 },
+          attackDidSpawn: false, dive: null, rebound: null, reboundTarget: { x, y: 0 },
           homeX: x, hitReactUntil: 0,
           awakened: false,
           staggered: false, staggerUntil: 0,
@@ -2052,7 +2104,8 @@
             e.hitReactUntil = now + 200;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
             e.attackDidSpawn = false;
-            e.attackPath = null;
+            e.dive = null;
+            e.rebound = null;
             e.attackHitAt = 0;
             e.attackEndAt = 0;
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
@@ -2065,7 +2118,8 @@
             e.vx = 0; e.vy = 0;
             e.comboRemaining = 0;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            e.attackPath = null;
+            e.dive = null;
+            e.rebound = null;
             e.attackDidSpawn = false;
             e.attackHitAt = 0;
             e.attackEndAt = 0;
@@ -2088,7 +2142,8 @@
             e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
             e.comboRemaining = 0;
             e.attackDidSpawn = false;
-            e.attackPath = null;
+            e.dive = null;
+            e.rebound = null;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
@@ -2429,55 +2484,21 @@
             }
             e.facing = diff >= 0 ? 1 : -1;
             if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
-            const engageRange = e.engageRangeX ?? 6.2;
-            const attackRange = e.attackRangeX ?? 4.4;
-            const currentHorizontal = Math.abs(playerX - e.x);
-            const heroNearHome = horizontalToHome <= engageRange;
-            const heroNearBat = currentHorizontal <= engageRange;
-            const withinDetection = heroNearHome || heroNearBat;
+            const engageRangeX = e.engageRangeX ?? 6.2;
+            const engageRangeY = e.engageRangeY ?? 3.4;
+            const attackRangeX = e.attackRangeX ?? 4.4;
+            const horizontalHomeNow = Math.abs(playerX - e.homeX);
+            const horizontalBatNow = Math.abs(playerX - e.x);
+            const verticalBatNow = Math.abs(playerY - e.y);
+            const withinDetection = verticalBatNow <= engageRangeY && (horizontalHomeNow <= engageRangeX || horizontalBatNow <= engageRangeX);
             if (!withinDetection) {
               e.comboRemaining = 0;
               e.nextAttackAt = Math.max(e.nextAttackAt, now + 420);
+              break;
             }
-            if (withinDetection && now >= e.nextAttackAt && e.comboRemaining > 0) {
-              if (currentHorizontal <= attackRange) {
-                e.state = 'attack';
-                e.attackDidSpawn = false;
-                e.comboRemaining -= 1;
-                if (e.mgr.attack) setEnemyAnim(e, 'attack');
-                const attackDef = BAT_ATTACK_DATA.dive;
-                const travelMs = attackDef.travelMs ?? 520;
-                const floorY = centerFromFoot(e, -0.25);
-                const aimX = Math.max(clampMin + 0.15, Math.min(clampMax - 0.15, playerX));
-                const aimY = Math.max(floorY, playerY + 0.1);
-                const lateral = Math.abs(aimX - e.x);
-                const baseWave = attackDef.waveAmp ?? (e.sizeUnits * 0.62);
-                const waveAmp = Math.max(
-                  e.sizeUnits * 0.35,
-                  Math.min(e.sizeUnits * 1.1, baseWave + Math.max(0, 0.6 - lateral) * 0.45)
-                );
-                const launchDir = Math.sign(aimX - e.x);
-                const fallbackDir = e.facing >= 0 ? 1 : -1;
-                e.attackPath = {
-                  startX: e.x,
-                  startY: e.y,
-                  targetX: aimX,
-                  targetY: aimY,
-                  startTime: now,
-                  duration: travelMs,
-                  toleranceX: e.sizeUnits * 0.48,
-                  toleranceY: e.sizeUnits * 0.6,
-                  clampMin,
-                  clampMax,
-                  waveAmp,
-                  waveDir: launchDir !== 0 ? launchDir : fallbackDir
-                };
-                const hitFrac = attackDef.hitFrac ?? 0.6;
-                e.attackHitAt = now + travelMs * hitFrac;
-                e.attackEndAt = now + travelMs;
-                e.vx = 0;
-                e.vy = 0;
-                e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
+            if (now >= e.nextAttackAt && e.comboRemaining > 0) {
+              if (horizontalBatNow <= attackRangeX) {
+                if (startBatDive(e, now, playerX, playerY)) break;
               } else {
                 e.nextAttackAt = now + 160;
               }
@@ -2486,47 +2507,53 @@
           }
           case 'attack': {
             const attackDef = BAT_ATTACK_DATA.dive;
-            const path = e.attackPath;
-            if (!path) {
+            const dive = e.dive;
+            if (!dive) {
               e.state = 'rebound';
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
+              const hoverY = centerFromFoot(e, e.hover + 0.2);
               e.reboundTarget.x = e.x;
-              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
+              e.reboundTarget.y = hoverY;
+              e.rebound = {
+                startTime: now,
+                duration: 360,
+                startX: e.x,
+                startY: e.y,
+                targetX: e.x,
+                targetY: hoverY
+              };
               e.vx = 0;
               e.vy = 0;
               break;
             }
-            const clampMin = path.clampMin ?? (e.patrolMin ?? (e.homeX - 3));
-            const clampMax = path.clampMax ?? (e.patrolMax ?? (e.homeX + 3));
-            const duration = path.duration ?? (attackDef.travelMs ?? 520);
-            const elapsed = now - path.startTime;
-            const tRaw = duration > 0 ? elapsed / duration : 1;
-            const t = Math.min(1, Math.max(0, tRaw));
+            const clampMin = e.patrolMin ?? (e.homeX - 3);
+            const clampMax = e.patrolMax ?? (e.homeX + 3);
+            const duration = dive.duration ?? (attackDef?.travelMs ?? 520);
+            const elapsed = now - dive.startTime;
+            const t = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
+            const ease = t * t;
             const prevX = e.x;
-            let waveDir = path.waveDir;
-            if (waveDir == null) {
-              waveDir = (path.targetX >= path.startX) ? 1 : -1;
-              path.waveDir = waveDir;
-            }
-            const baseX = path.startX + (path.targetX - path.startX) * t;
-            const waveAmp = path.waveAmp ?? (attackDef.waveAmp ?? 0);
+            const baseX = dive.startX + (dive.targetX - dive.startX) * ease;
+            const waveAmp = dive.waveAmp ?? 0;
+            const waveDir = dive.waveDir ?? (dive.targetX >= dive.startX ? 1 : -1);
             const wave = Math.sin(t * Math.PI) * waveAmp * (waveDir || 1);
             e.x = baseX + wave;
-            const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
-            e.y = path.startY + (path.targetY - path.startY) * curve;
             if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
-              e.x = Math.max(clampMin, Math.min(clampMax, e.x));
+              const edgePad = Math.max(0.12, e.sizeUnits * 0.18);
+              e.x = Math.max(clampMin + edgePad, Math.min(clampMax - edgePad, e.x));
             }
+            const dropCurve = ease;
+            e.y = dive.startY + (dive.targetY - dive.startY) * dropCurve;
             const minCenter = centerFromFoot(e, -0.1);
             if (e.y < minCenter) e.y = minCenter;
             e.facing = e.x >= prevX ? 1 : -1;
-            if (!e.attackDidSpawn) {
-              const toleranceX = path.toleranceX ?? e.sizeUnits * 0.48;
-              const toleranceY = path.toleranceY ?? e.sizeUnits * 0.6;
+            if (attackDef && !e.attackDidSpawn) {
               const timeReady = e.attackHitAt && now >= e.attackHitAt;
+              const toleranceX = e.sizeUnits * 0.56;
+              const toleranceY = e.sizeUnits * 0.72;
               const closeToPlayer = Math.abs(e.x - playerX) <= toleranceX;
-              const lowEnough = e.y <= path.targetY + toleranceY;
-              if (timeReady || (closeToPlayer && lowEnough)) {
+              const alignedY = Math.abs(e.y - playerY) <= toleranceY;
+              if (timeReady || (t >= Math.min(0.98, dive.hitFrac ?? 0.82)) || (closeToPlayer && alignedY)) {
                 spawnBatHitbox(e, attackDef);
                 e.attackDidSpawn = true;
               }
@@ -2534,44 +2561,70 @@
             if (t >= 1) {
               e.state = 'rebound';
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              const offset = (Math.random() - 0.5) * 2.2;
-              const clampMin = e.patrolMin ?? (e.homeX - 3);
-              const clampMax = e.patrolMax ?? (e.homeX + 3);
-              e.reboundTarget.x = Math.max(clampMin, Math.min(clampMax, playerX + offset));
-              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
-              e.attackPath = null;
+              const offset = (Math.random() - 0.5) * 1.8;
+              const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+              const hoverY = centerFromFoot(e, e.hover + 0.2);
+              const targetX = Math.max(clampMin + edgePad, Math.min(clampMax - edgePad, playerX + offset));
+              e.reboundTarget.x = targetX;
+              e.reboundTarget.y = hoverY;
+              e.rebound = {
+                startTime: now,
+                duration: 420,
+                startX: e.x,
+                startY: e.y,
+                targetX,
+                targetY: hoverY
+              };
+              e.dive = null;
               e.vx = 0;
               e.vy = 0;
             }
             break;
           }
           case 'rebound': {
-            const rx = e.reboundTarget.x - e.x;
-            const ry = e.reboundTarget.y - e.y;
-            const distR = Math.hypot(rx, ry);
-            const speed = 3.2;
-            if (distR > 0.08) {
-              e.vx = (rx / distR) * speed;
-              e.vy = (ry / distR) * speed;
-              e.x += e.vx * dt;
-              e.y += e.vy * dt;
-              e.facing = e.vx >= 0 ? 1 : -1;
-            } else {
-              e.x = e.reboundTarget.x;
-              e.y = e.reboundTarget.y;
+            const rebound = e.rebound;
+            if (!rebound) {
+              e.state = 'fly';
+              if (e.mgr.fly) setEnemyAnim(e, 'fly');
               e.vx = 0;
               e.vy = 0;
-              const engageRange = e.engageRangeX ?? 6.2;
-              const dropRange = e.disengageRangeX ?? 7.8;
-              const dxNow = playerX - e.x;
-              const horizontalHomeNow = Math.abs(playerX - e.homeX);
-              const horizontalBatNow = Math.abs(dxNow);
+              break;
+            }
+            const duration = rebound.duration ?? 420;
+            const elapsed = now - rebound.startTime;
+            const t = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
+            const ease = 1 - Math.pow(1 - t, 2);
+            const targetX = rebound.targetX ?? e.reboundTarget?.x ?? e.x;
+            const targetY = rebound.targetY ?? e.reboundTarget?.y ?? e.y;
+            const prevX = e.x;
+            e.x = rebound.startX + (targetX - rebound.startX) * ease;
+            e.y = rebound.startY + (targetY - rebound.startY) * ease;
+            const clampMin = e.patrolMin ?? (e.homeX - 3);
+            const clampMax = e.patrolMax ?? (e.homeX + 3);
+            if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+              const edgePad = Math.max(0.12, e.sizeUnits * 0.18);
+              e.x = Math.max(clampMin + edgePad, Math.min(clampMax - edgePad, e.x));
+            }
+            const minCenter = centerFromFoot(e, -0.1);
+            if (e.y < minCenter) e.y = minCenter;
+            e.facing = e.x >= prevX ? 1 : -1;
+            if (t >= 1) {
               e.state = 'fly';
               e.awakened = true;
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              if (horizontalHomeNow <= engageRange || horizontalBatNow <= engageRange) {
+              e.rebound = null;
+              e.vx = 0;
+              e.vy = 0;
+              const engageRangeX = e.engageRangeX ?? 6.2;
+              const engageRangeY = e.engageRangeY ?? 3.4;
+              const dropRange = e.disengageRangeX ?? 7.8;
+              const horizontalHomeNow = Math.abs(playerX - e.homeX);
+              const horizontalBatNow = Math.abs(playerX - e.x);
+              const verticalBatNow = Math.abs(playerY - e.y);
+              const withinDetection = verticalBatNow <= engageRangeY && (horizontalHomeNow <= engageRangeX || horizontalBatNow <= engageRangeX);
+              if (withinDetection) {
                 if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
-                e.nextAttackAt = Math.max(now + 360, e.nextAttackAt);
+                e.nextAttackAt = Math.max(now + 340, e.nextAttackAt);
               } else if (horizontalHomeNow <= dropRange) {
                 e.comboRemaining = 0;
                 e.nextAttackAt = Math.max(now + 720, e.nextAttackAt);
@@ -2595,7 +2648,6 @@
           default:
             break;
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
