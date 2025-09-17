@@ -20,7 +20,10 @@
 
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
-  
+
+  const ENEMY_FADE_DELAY_MS = 5000;
+  const ENEMY_FADE_DURATION_MS = 1000;
+
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
@@ -1456,7 +1459,29 @@
         if (!list || list.length === 0) return null;
         return list[Math.floor(Math.random() * list.length)];
       }
-
+      function updateEnemyFade(e, now) {
+        if (!e) return;
+        if (!e.deathAt || !e.sprite) return;
+        if (e.fadeDone) {
+          e.sprite.isVisible = false;
+          return;
+        }
+        const delay = e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS;
+        const duration = e.fadeDurationMs ?? ENEMY_FADE_DURATION_MS;
+        const start = e.fadeStartAt || (e.deathAt + delay);
+        if (!e.fadeStartAt) e.fadeStartAt = start;
+        if (now < start) return;
+        const progress = duration > 0 ? Math.min(1, Math.max(0, (now - start) / duration)) : 1;
+        const alpha = 1 - progress;
+        if (alpha <= 0.001) {
+          e.sprite.isVisible = false;
+          if (e.debugMesh) e.debugMesh.isVisible = false;
+          if (e.debugLabel) e.debugLabel.mesh.isVisible = false;
+          e.fadeDone = true;
+          return;
+        }
+        e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
+      }
       const WOLF_COMBO_TABLE = {
         close: [
           ['bite'],
@@ -1480,36 +1505,36 @@
       const WOLF_ATTACK_DATA = {
         bite: {
           anim: 'bite',
-          hitFrac: 0.42,
-          durationMs: 160,
+          hitFrac: 0.46,
+          durationMs: 190,
           damage: 12,
           poise: 14,
-          width: e => e.sizeUnits * 0.85,
-          height: e => e.sizeUnits * 0.48,
-          offset: e => ({ x: e.sizeUnits * 0.52, y: -e.sizeUnits * 0.05 }),
-          forwardImpulse: 2.8,
-          comboGapMs: 140,
-          recoveryMs: 360,
-          cooldownMs: 780
+          width: e => e.sizeUnits * 0.62,
+          height: e => e.sizeUnits * 0.42,
+          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.05 }),
+          forwardImpulse: 2.2,
+          comboGapMs: 130,
+          recoveryMs: 340,
+          cooldownMs: 760
         },
         claw: {
           anim: 'claw',
-          hitFrac: 0.48,
-          durationMs: 180,
+          hitFrac: 0.5,
+          durationMs: 200,
           damage: 15,
           poise: 16,
-          width: e => e.sizeUnits * 0.95,
-          height: e => e.sizeUnits * 0.55,
-          offset: e => ({ x: e.sizeUnits * 0.66, y: -e.sizeUnits * 0.02 }),
-          forwardImpulse: 2.2,
+          width: e => e.sizeUnits * 0.72,
+          height: e => e.sizeUnits * 0.52,
+          offset: e => ({ x: e.sizeUnits * 0.42, y: -e.sizeUnits * 0.02 }),
+          forwardImpulse: 2.6,
           comboGapMs: 160,
           recoveryMs: 420,
-          cooldownMs: 860
+          cooldownMs: 840
         },
         leap: {
           type: 'maneuver',
-          jumpVel: 7.1,
-          forwardImpulse: 4.4,
+          jumpVel: 6.8,
+          forwardImpulse: 5,
           maxDurationMs: 900,
           minAirTime: 0.28,
           landBufferMs: 140,
@@ -1520,13 +1545,14 @@
       const BAT_ATTACK_DATA = {
         dive: {
           anim: 'attack',
-          hitFrac: 0.52,
-          durationMs: 150,
+          hitFrac: 0.45,
+          durationMs: 160,
+          travelMs: 520,
           damage: 9,
           poise: 9,
-          width: e => e.sizeUnits * 0.8,
-          height: e => e.sizeUnits * 0.55,
-          offset: e => ({ x: e.sizeUnits * 0.25, y: 0 }),
+          width: e => e.sizeUnits * 0.66,
+          height: e => e.sizeUnits * 0.46,
+          offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
           cooldownMs: 900
         }
       };
@@ -1548,14 +1574,27 @@
 
       function chooseWolfCombo(e, distance) {
         let bucket = 'far';
-        if (distance < 1.4) bucket = 'close';
-        else if (distance < 3.6) bucket = 'mid';
+        if (distance < 1.2) bucket = 'close';
+        else if (distance < 3.2) bucket = 'mid';
+        const allowLeap = distance >= 2.4;
         const base = WOLF_COMBO_TABLE[bucket] || WOLF_COMBO_TABLE.close;
-        const pool = base.map(seq => seq.slice());
+        let pool = base
+          .filter(seq => seq && (allowLeap || !seq.includes('leap')))
+          .map(seq => seq.slice());
         if (e.packRole === 'leader') {
-          pool.push(...WOLF_COMBO_TABLE.mid.filter(seq => seq.length > 1).map(seq => seq.slice()));
+          pool.push(...WOLF_COMBO_TABLE.mid
+            .filter(seq => seq && seq.length > 1 && (allowLeap || !seq.includes('leap')))
+            .map(seq => seq.slice()));
         } else if (e.packRole && e.packRole.startsWith('flank')) {
           pool.push(['claw'], ['bite', 'claw']);
+        }
+        if (!allowLeap) {
+          pool = pool.filter(seq => seq && !seq.includes('leap'));
+        }
+        if (pool.length === 0) {
+          pool = WOLF_COMBO_TABLE.close
+            .filter(seq => seq && !seq.includes('leap'))
+            .map(seq => seq.slice());
         }
         const choice = randChoice(pool);
         return choice ? choice.slice() : [];
@@ -1571,7 +1610,7 @@
       }
 
       function spawnWolfHitbox(e, def) {
-        if (!e.combat || !def) return;
+        if (!e.combat || !def || e.dying) return;
         const width = typeof def.width === 'function' ? def.width(e) : def.width;
         const height = typeof def.height === 'function' ? def.height(e) : def.height;
         const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
@@ -1652,7 +1691,7 @@
       }
 
       function spawnBatHitbox(e, def) {
-        if (!e.combat || !def) return;
+        if (!e.combat || !def || e.dying) return;
         const width = typeof def.width === 'function' ? def.width(e) : def.width;
         const height = typeof def.height === 'function' ? def.height(e) : def.height;
         const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
@@ -1671,7 +1710,7 @@
       }
 
       function assignWolfPackRoles() {
-        const wolves = enemies.filter(en => en.type === 'wolf' && !en.dead);
+        const wolves = enemies.filter(en => en.type === 'wolf' && !en.dead && !en.dying);
         if (wolves.length === 0) return;
         const playerX = playerSprite.sprite?.position.x ?? 0;
         let leader = null;
@@ -1718,6 +1757,7 @@
         sp.size = e.sizeUnits;
         sp.position = pos;
         sp.invertU = (e.facing < 0);
+        sp.color = new BABYLON.Color4(1, 1, 1, 1);
         sp.playAnimation(0, meta.frames - 1, meta.loop, 1000 / meta.fps);
         e.sprite = sp;
         e.anim = name;
@@ -1725,6 +1765,36 @@
         e.animDur = (meta.frames / meta.fps) * 1000;
       }
 
+      function finalizeWolfDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.onGround = true;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        e.leapState = null;
+        e.attackQueue = [];
+        e.currentAttack = null;
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
+
+      function finalizeBatDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        e.attackPath = null;
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
     async function spawnWolf(x, footY, minX, maxX) {
         const e = {
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
@@ -1736,6 +1806,9 @@
           attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
           nextComboAt: 0, leapState: null, hitReactUntil: 0,
           staggered: false, staggerUntil: 0,
+          pendingLandingState: null,
+          dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
+          fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           dead: false, combat: null, hurtbox: null
         };
         await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
@@ -1780,14 +1853,26 @@
           onDamage: (event) => {
             const now = performance.now();
             e.lastHitAt = now;
-            if (e.dead || event?.staggered) return;
+            if (e.dying || e.dead || event?.staggered) return;
             e.attackQueue = [];
             e.comboIndex = 0;
             e.currentAttack = null;
             e.readyUntil = 0;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'hit', until: now + 240 };
+              e.hitReactUntil = now + 240;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              return;
+            }
+            e.leapState = null;
+            e.vx = 0;
+            e.vy = 0;
             e.state = 'hit';
             e.hitReactUntil = now + 240;
             e.stateUntil = e.hitReactUntil;
+            e.nextComboAt = Math.max(e.nextComboAt, now + 600);
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
           },
           onStagger: () => {
@@ -1798,8 +1883,15 @@
             e.comboIndex = 0;
             e.currentAttack = null;
             e.readyUntil = 0;
-            e.state = 'stagger';
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'stagger', until: combatActor.staggeredUntil };
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              return;
+            }
             e.vx = 0; e.vy = 0;
+            e.state = 'stagger';
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
             e.nextComboAt = Math.max(e.nextComboAt, now + 600);
           },
@@ -1812,23 +1904,34 @@
             if (e.mgr.ready) setEnemyAnim(e, 'ready');
           },
           onDeath: () => {
-            if (e.dead) return;
-            e.dead = true;
-            e.state = 'dead';
-            e.vx = 0; e.vy = 0;
-            if (e.mgr.dead) setEnemyAnim(e, 'dead');
+            if (e.dead || e.dying) return;
+            const now = performance.now();
+            e.dying = true;
+            e.deathAt = now;
+            e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = 0;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
             e.hurtbox = null;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'dead' };
+            } else {
+              finalizeWolfDeath(e, now);
+            }
           }
         });
         const hb = Combat.registerHurtbox(combatActor, {
           id: `${actorId}_body`,
           shape: 'rect',
-          width: e.sizeUnits * 0.65,
-          height: e.sizeUnits * 0.55,
-          offset: { x: 0, y: 0 }
+          width: e.sizeUnits * 0.58,
+          height: e.sizeUnits * 0.5,
+          offset: { x: 0, y: -e.sizeUnits * 0.02 }
         });
         e.combat = combatActor;
         e.hurtbox = hb;
@@ -1842,9 +1945,13 @@
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
           comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
-          attackDidSpawn: false, reboundTarget: { x, y: 0 },
+          attackDidSpawn: false, attackPath: null, reboundTarget: { x, y: 0 },
           homeX: x, hitReactUntil: 0,
           staggered: false, staggerUntil: 0,
+          pendingLandingState: null,
+          dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
+          fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
+          fallGravity: -26,
           dead: false, combat: null, hurtbox: null
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
@@ -1887,11 +1994,14 @@
           onDamage: (event) => {
             const now = performance.now();
             e.lastHitAt = now;
-            if (e.dead || event?.staggered) return;
+            if (e.dying || e.dead || event?.staggered) return;
             e.state = 'hit';
             e.hitReactUntil = now + 200;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
             e.attackDidSpawn = false;
+            e.attackPath = null;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
           },
           onStagger: () => {
@@ -1902,6 +2012,10 @@
             e.vx = 0; e.vy = 0;
             e.comboRemaining = 0;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            e.attackPath = null;
+            e.attackDidSpawn = false;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 720);
           },
           onStaggerEnd: ({ now }) => {
@@ -1913,23 +2027,29 @@
             e.comboRemaining = Math.max(1, (Math.random() < 0.6 ? 2 : 1));
           },
           onDeath: () => {
-            if (e.dead) return;
-            e.dead = true;
-            e.state = 'dead';
-            e.vx = 0; e.vy = 0;
-            if (e.mgr.dead) setEnemyAnim(e, 'dead');
+            if (e.dead || e.dying) return;
+            const now = performance.now();
+            e.dying = true;
+            e.deathAt = now;
+            e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
+            e.comboRemaining = 0;
+            e.attackDidSpawn = false;
+            e.attackPath = null;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
             e.hurtbox = null;
+            e.pendingLandingState = { type: 'dead' };
+            e.vx = 0;
+            e.vy = -1.2;
           }
         });
         const hb = Combat.registerHurtbox(combatActor, {
           id: `${actorId}_body`,
           shape: 'rect',
-          width: e.sizeUnits * 0.5,
-          height: e.sizeUnits * 0.45,
-          offset: { x: 0, y: 0 }
+          width: e.sizeUnits * 0.46,
+          height: e.sizeUnits * 0.4,
+          offset: { x: 0, y: -e.sizeUnits * 0.02 }
         });
         e.combat = combatActor;
         e.hurtbox = hb;
@@ -1938,9 +2058,8 @@
 
       function updateWolf(e, dt) {
         const now = performance.now();
-        const playerX = playerSprite.sprite?.position.x ?? 0;
-        const dx = playerX - e.x;
-        const absDx = Math.abs(dx);
+        updateEnemyFade(e, now);
+        if (e.fadeDone) return;
         if (e.dead) {
           if (e.sprite) {
             e.sprite.position.x = e.x;
@@ -1949,14 +2068,18 @@
           }
           return;
         }
+        const playerX = playerSprite.sprite?.position.x ?? 0;
+        const dx = playerX - e.x;
+        const absDx = Math.abs(dx);
+        const dying = e.dying && !e.dead;
 
         e.playerSeen = e.playerSeen || absDx < 7.5;
 
-        if (e.state === 'hit' && now >= e.hitReactUntil) {
+        if (!dying && e.state === 'hit' && now >= e.hitReactUntil) {
           e.state = e.playerSeen ? 'stalk' : 'patrol';
         }
 
-        if (e.state === 'patrol' && e.playerSeen) {
+        if (!dying && e.state === 'patrol' && e.playerSeen) {
           e.state = 'stalk';
         }
 
@@ -1973,23 +2096,27 @@
             break;
           }
           case 'stalk': {
+            if (dying) { e.vx *= 0.9; break; }
             if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
             const targetX = computeWolfTargetX(e, playerX);
             const diff = targetX - e.x;
-            const speed = 2.9;
-            if (Math.abs(diff) > 0.12) {
+            const speed = absDx > 4 ? 3.3 : 2.9;
+            if (Math.abs(diff) > 0.1) {
               e.vx = Math.sign(diff) * speed;
             } else {
               e.vx = 0;
             }
             e.facing = dx >= 0 ? 1 : -1;
-            if (e.attackQueue.length === 0 && now >= e.nextComboAt) {
-              const combo = chooseWolfCombo(e, absDx);
-              if (combo.length > 0) {
-                e.attackQueue = combo;
-                e.comboIndex = 0;
-                e.nextComboAt = now + 200; // prevent instant reselection
-                startWolfReady(e, 220);
+            if (!e.pendingLandingState && e.attackQueue.length === 0 && now >= e.nextComboAt) {
+              if (absDx <= 5.2) {
+                const combo = chooseWolfCombo(e, absDx);
+                if (combo.length > 0) {
+                  e.attackQueue = combo;
+                  e.comboIndex = 0;
+                  e.nextComboAt = now + 200; // prevent instant reselection
+                  const readyDelay = absDx > 2.6 ? 160 : 200;
+                  startWolfReady(e, readyDelay);
+                }
               }
             }
             break;
@@ -1998,11 +2125,15 @@
             e.vx = 0;
             e.vy = 0;
             e.facing = dx >= 0 ? 1 : -1;
-            if (now >= e.readyUntil) {
+            if (!dying && !e.pendingLandingState && now >= e.readyUntil) {
               const name = e.attackQueue[e.comboIndex];
               if (!name || !startWolfAttack(e, name)) {
                 finishWolfAttack(e);
               }
+            }
+            if (dying || e.pendingLandingState) {
+              e.attackQueue = [];
+              e.comboIndex = 0;
             }
             break;
           }
@@ -2010,17 +2141,18 @@
             e.facing = dx >= 0 ? 1 : -1;
             const attack = e.currentAttack;
             const def = attack?.def;
-            if (attack && def) {
-              if (!attack.spawned && attack.hitAt != null && now >= attack.hitAt) {
-                spawnWolfHitbox(e, def);
-                attack.spawned = true;
-                e.vx *= 0.4;
-              }
-              if (attack.endAt != null && now >= attack.endAt) {
-                finishWolfAttack(e, { def });
-              }
-            } else {
-              finishWolfAttack(e);
+            if (!attack || !def) {
+              if (!dying && !e.pendingLandingState) finishWolfAttack(e);
+              break;
+            }
+            if (dying || e.pendingLandingState) break;
+            if (!attack.spawned && attack.hitAt != null && now >= attack.hitAt) {
+              spawnWolfHitbox(e, def);
+              attack.spawned = true;
+              e.vx *= 0.4;
+            }
+            if (attack.endAt != null && now >= attack.endAt) {
+              finishWolfAttack(e, { def });
             }
             break;
           }
@@ -2028,20 +2160,22 @@
             e.facing = dx >= 0 ? 1 : -1;
             const leap = e.leapState;
             if (!leap) {
-              finishWolfAttack(e);
+              if (!dying && !e.pendingLandingState) finishWolfAttack(e);
             } else {
               if (e.vy > 0.3 && e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
               else if (e.vy < -0.3 && e.mgr.jumpDown) setEnemyAnim(e, 'jumpDown');
               else if (e.mgr.jumpMid) setEnemyAnim(e, 'jumpMid');
-              if (now >= leap.endBy) {
+              if (!dying && !e.pendingLandingState && now >= leap.endBy) {
                 finishWolfAttack(e, { def: leap.def });
+              } else if ((dying || e.pendingLandingState) && now >= leap.endBy) {
+                e.leapState = null;
               }
             }
             break;
           }
           case 'recover': {
             e.vx *= 0.85;
-            if (now >= e.stateUntil) {
+            if (!dying && now >= e.stateUntil) {
               e.state = 'stalk';
               if (e.mgr.run) setEnemyAnim(e, 'run');
             }
@@ -2056,7 +2190,6 @@
           default:
             break;
         }
-
         if (e.state !== 'leap' && !e.onGround) {
           e.vy += e.gravity * dt;
         } else if (e.state === 'leap') {
@@ -2079,16 +2212,49 @@
         } else {
           e.onGround = false;
         }
+        if (landed) {
+          if (e.pendingLandingState) {
+            const pending = e.pendingLandingState;
+            e.pendingLandingState = null;
+            e.leapState = null;
+            if (pending.type === 'hit') {
+              e.vx = 0;
+              e.vy = 0;
+              e.state = 'hit';
+              e.hitReactUntil = Math.max(now + 80, pending.until || (now + 220));
+              e.stateUntil = e.hitReactUntil;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            } else if (pending.type === 'stagger') {
+              e.vx = 0;
+              e.vy = 0;
+              e.state = 'stagger';
+              e.staggered = true;
+              e.staggerUntil = pending.until || (now + 400);
+              e.stateUntil = e.staggerUntil;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            } else if (pending.type === 'dead') {
+              finalizeWolfDeath(e, now);
+            }
+          } else if (dying) {
+            finalizeWolfDeath(e, now);
+          }
+        }
 
         if (e.state === 'leap' && e.leapState) {
           const leap = e.leapState;
           const minAir = leap.def?.minAirTime ?? 0;
           if ((landed && (now - leap.start) >= minAir) || (!landed && now >= leap.endBy)) {
-            finishWolfAttack(e, { def: leap.def });
+            if (!dying && !e.pendingLandingState) {
+              finishWolfAttack(e, { def: leap.def });
+            } else {
+              e.leapState = null;
+            }
           }
         }
 
-        if (e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
+        if (!dying && e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
         }
@@ -2102,6 +2268,8 @@
 
       function updateBat(e, dt) {
         const now = performance.now();
+        updateEnemyFade(e, now);
+        if (e.fadeDone) return;
         const playerSpritePos = playerSprite.sprite?.position;
         const playerX = playerSpritePos?.x ?? 0;
         const playerY = playerSpritePos?.y ?? 0;
@@ -2109,6 +2277,26 @@
         const dy = playerY - e.y;
         const dist = Math.hypot(dx, dy);
         if (e.dead) {
+          if (e.sprite) {
+            e.sprite.position.x = e.x;
+            e.sprite.position.y = e.y;
+            e.sprite.invertU = (e.facing < 0);
+          }
+          return;
+        }
+
+        if (e.dying) {
+          const gravity = e.fallGravity ?? -26;
+          e.vy += gravity * dt;
+          e.vy = Math.max(e.vy, -10);
+          e.y += e.vy * dt;
+          e.x += e.vx * dt;
+          const ground = centerFromFoot(e, 0);
+          if (e.y <= ground) {
+            e.y = ground;
+            e.vy = 0;
+            finalizeBatDeath(e, now);
+          }
           if (e.sprite) {
             e.sprite.position.x = e.x;
             e.sprite.position.y = e.y;
@@ -2169,45 +2357,64 @@
               e.comboRemaining -= 1;
               if (e.mgr.attack) setEnemyAnim(e, 'attack');
               const attackDef = BAT_ATTACK_DATA.dive;
-              e.attackHitAt = (e.animStart || now) + (e.animDur || 0) * (attackDef.hitFrac ?? 0.5);
-              e.attackEndAt = (e.animStart || now) + (e.animDur || 0);
-              const targetY = Math.max(0.2, playerY + 0.2);
+              const travelMs = attackDef.travelMs ?? 520;
+              e.attackHitAt = now + travelMs * (attackDef.hitFrac ?? 0.5);
+              e.attackEndAt = now + travelMs;
+              const floorY = centerFromFoot(e, -0.25);
               const aimX = playerX;
-              const aimY = targetY;
-              const ddx = aimX - e.x;
-              const ddy = aimY - e.y;
-              const len = Math.max(0.001, Math.hypot(ddx, ddy));
-              const speedDive = 7.2;
-              e.vx = (ddx / len) * speedDive;
-              e.vy = (ddy / len) * speedDive;
-              e.attackTarget = { x: aimX, y: aimY };
-              e.attackLaunchedAt = now;
+              const aimY = Math.max(floorY, playerY + 0.1);
+              e.attackPath = {
+                startX: e.x,
+                startY: e.y,
+                targetX: aimX,
+                targetY: aimY,
+                startTime: now,
+                duration: travelMs
+              };
+              e.vx = 0;
+              e.vy = 0;
               e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
             }
             break;
           }
           case 'attack': {
-            e.x += e.vx * dt;
-            e.y += e.vy * dt;
-            e.facing = e.vx >= 0 ? 1 : -1;
+            const attackDef = BAT_ATTACK_DATA.dive;
+            const path = e.attackPath;
+            if (!path) {
+              e.state = 'rebound';
+              if (e.mgr.fly) setEnemyAnim(e, 'fly');
+              e.reboundTarget.x = e.x;
+              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
+              e.vx = 0;
+              e.vy = 0;
+              break;
+            }
+            const duration = path.duration ?? (attackDef.travelMs ?? 520);
+            const elapsed = now - path.startTime;
+            const tRaw = duration > 0 ? elapsed / duration : 1;
+            const t = Math.min(1, Math.max(0, tRaw));
+            const prevX = e.x;
+            const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
+            e.x = path.startX + (path.targetX - path.startX) * t;
+            e.y = path.startY + (path.targetY - path.startY) * curve;
             const minCenter = centerFromFoot(e, -0.1);
             if (e.y < minCenter) e.y = minCenter;
-            const attackDef = BAT_ATTACK_DATA.dive;
+            e.facing = e.x >= prevX ? 1 : -1;
             if (!e.attackDidSpawn && e.attackHitAt && now >= e.attackHitAt) {
               spawnBatHitbox(e, attackDef);
               e.attackDidSpawn = true;
             }
-            const attackDuration = now - (e.attackLaunchedAt || now);
-            if ((e.attackEndAt && now >= e.attackEndAt) || attackDuration > 0.75) {
+            if (t >= 1) {
               e.state = 'rebound';
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
               const offset = (Math.random() - 0.5) * 2.2;
               const clampMin = e.patrolMin ?? (e.homeX - 3);
               const clampMax = e.patrolMax ?? (e.homeX + 3);
               e.reboundTarget.x = Math.max(clampMin, Math.min(clampMax, playerX + offset));
-              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.1);
-              e.vx *= 0.3;
-              e.vy = Math.abs(e.vy) * 0.4 + 2.5;
+              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
+              e.attackPath = null;
+              e.vx = 0;
+              e.vy = 0;
             }
             break;
           }
@@ -2221,17 +2428,20 @@
               e.vy = (ry / distR) * speed;
               e.x += e.vx * dt;
               e.y += e.vy * dt;
+              e.facing = e.vx >= 0 ? 1 : -1;
             } else {
               e.x = e.reboundTarget.x;
               e.y = e.reboundTarget.y;
-              if (e.comboRemaining > 0) {
+              if (dist <= 7.5) {
                 e.state = 'fly';
                 if (e.mgr.fly) setEnemyAnim(e, 'fly');
-                e.nextAttackAt = Math.max(e.nextAttackAt, now + 360);
+                if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
+                e.nextAttackAt = Math.max(now + 360, e.nextAttackAt);
               } else {
                 e.state = 'sleep';
                 if (e.mgr.sleep) setEnemyAnim(e, 'sleep');
-                e.nextAttackAt = now + 800;
+                e.nextAttackAt = now + 1200;
+                e.comboRemaining = 0;
               }
             }
             break;
@@ -2262,12 +2472,16 @@
         enemies.forEach(e => {
           if (!e.sprite) return;
           if (e.type === 'wolf') updateWolf(e, dt); else updateBat(e, dt);
-          if (e.debugMesh) { e.debugMesh.position.x = e.x; e.debugMesh.position.y = e.y; e.debugMesh.isVisible = enemyDbg; }
+          if (e.debugMesh) {
+            e.debugMesh.position.x = e.x;
+            e.debugMesh.position.y = e.y;
+            e.debugMesh.isVisible = enemyDbg && !e.fadeDone;
+          }
           if (e.debugLabel) {
             const lbl = e.debugLabel;
             lbl.mesh.position.x = e.x;
             lbl.mesh.position.y = e.y + e.sizeUnits * 0.6;
-            if (enemyDbg) {
+            if (enemyDbg && !e.fadeDone) {
               const texW = lbl.w || 160;
               const texH = lbl.h || 48;
               lbl.ctx.clearRect(0, 0, texW, texH);
