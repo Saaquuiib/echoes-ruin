@@ -1459,6 +1459,7 @@
         if (!list || list.length === 0) return null;
         return list[Math.floor(Math.random() * list.length)];
       }
+
       function updateEnemyFade(e, now) {
         if (!e) return;
         if (!e.deathAt || !e.sprite) return;
@@ -1482,6 +1483,7 @@
         }
         e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
       }
+
       const WOLF_COMBO_TABLE = {
         close: [
           ['bite'],
@@ -1555,7 +1557,10 @@
           width: e => e.sizeUnits * 0.66,
           height: e => e.sizeUnits * 0.46,
           offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
-          cooldownMs: 900
+          cooldownMs: 900,
+          followX: 4.6,
+          followY: 3.2,
+          waveAmp: 0.78
         }
       };
 
@@ -1839,6 +1844,7 @@
         e.attackPath = null;
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
+
     async function spawnWolf(x, footY, minX, maxX) {
         const e = {
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
@@ -2299,6 +2305,7 @@
             finalizeWolfDeath(e, now);
           }
         }
+
         if (e.state === 'leap' && e.leapState) {
           const leap = e.leapState;
           const minAir = leap.def?.minAirTime ?? 0;
@@ -2440,6 +2447,14 @@
                 const floorY = centerFromFoot(e, -0.25);
                 const aimX = Math.max(clampMin + 0.15, Math.min(clampMax - 0.15, playerX));
                 const aimY = Math.max(floorY, playerY + 0.1);
+                const lateral = Math.abs(aimX - e.x);
+                const baseWave = attackDef.waveAmp ?? (e.sizeUnits * 0.62);
+                const waveAmp = Math.max(
+                  e.sizeUnits * 0.35,
+                  Math.min(e.sizeUnits * 1.1, baseWave + Math.max(0, 0.6 - lateral) * 0.45)
+                );
+                const followX = attackDef.followX ?? 4.6;
+                const followY = attackDef.followY ?? 3.2;
                 e.attackPath = {
                   startX: e.x,
                   startY: e.y,
@@ -2448,7 +2463,13 @@
                   startTime: now,
                   duration: travelMs,
                   toleranceX: e.sizeUnits * 0.48,
-                  toleranceY: e.sizeUnits * 0.6
+                  toleranceY: e.sizeUnits * 0.6,
+                  clampMin,
+                  clampMax,
+                  waveAmp,
+                  waveDir: e.facing >= 0 ? 1 : -1,
+                  followX,
+                  followY
                 };
                 const hitFrac = attackDef.hitFrac ?? 0.6;
                 e.attackHitAt = now + travelMs * hitFrac;
@@ -2474,14 +2495,40 @@
               e.vy = 0;
               break;
             }
+            const clampMin = path.clampMin ?? (e.patrolMin ?? (e.homeX - 3));
+            const clampMax = path.clampMax ?? (e.patrolMax ?? (e.homeX + 3));
+            if (path.followX) {
+              const desiredX = Math.max(clampMin + 0.15, Math.min(clampMax - 0.15, playerX));
+              const lerp = Math.min(1, Math.max(0, path.followX * dt));
+              path.targetX += (desiredX - path.targetX) * lerp;
+            }
+            if (path.followY) {
+              const floorY = centerFromFoot(e, -0.25);
+              const desiredY = Math.max(floorY, playerY + 0.1);
+              const lerp = Math.min(1, Math.max(0, path.followY * dt));
+              path.targetY += (desiredY - path.targetY) * lerp;
+            }
+            if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+              path.targetX = Math.max(clampMin + 0.01, Math.min(clampMax - 0.01, path.targetX));
+            }
             const duration = path.duration ?? (attackDef.travelMs ?? 520);
             const elapsed = now - path.startTime;
             const tRaw = duration > 0 ? elapsed / duration : 1;
             const t = Math.min(1, Math.max(0, tRaw));
             const prevX = e.x;
             const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
-            e.x = path.startX + (path.targetX - path.startX) * t;
+            const baseX = path.startX + (path.targetX - path.startX) * t;
+            const waveDir = path.waveDir != null ? path.waveDir : (path.targetX >= path.startX ? 1 : -1);
+            if (path.waveDir == null && (path.targetX - path.startX) !== 0) {
+              path.waveDir = Math.sign(path.targetX - path.startX);
+            }
+            const waveAmp = path.waveAmp ?? (attackDef.waveAmp ?? 0);
+            const wave = Math.sin(t * Math.PI) * waveAmp * (waveDir || 1);
+            e.x = baseX + wave;
             e.y = path.startY + (path.targetY - path.startY) * curve;
+            if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+              e.x = Math.max(clampMin, Math.min(clampMax, e.x));
+            }
             const minCenter = centerFromFoot(e, -0.1);
             if (e.y < minCenter) e.y = minCenter;
             e.facing = e.x >= prevX ? 1 : -1;
@@ -2560,7 +2607,6 @@
           default:
             break;
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
