@@ -1459,7 +1459,6 @@
         if (!list || list.length === 0) return null;
         return list[Math.floor(Math.random() * list.length)];
       }
-
       function updateEnemyFade(e, now) {
         if (!e) return;
         if (!e.deathAt || !e.sprite) return;
@@ -1483,7 +1482,6 @@
         }
         e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
       }
-
       const WOLF_COMBO_TABLE = {
         close: [
           ['bite'],
@@ -1841,7 +1839,6 @@
         e.attackPath = null;
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
-
     async function spawnWolf(x, footY, minX, maxX) {
         const e = {
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
@@ -2302,7 +2299,6 @@
             finalizeWolfDeath(e, now);
           }
         }
-
         if (e.state === 'leap' && e.leapState) {
           const leap = e.leapState;
           const minAir = leap.def?.minAirTime ?? 0;
