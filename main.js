@@ -2322,6 +2322,7 @@
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
         }
+
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
@@ -2431,11 +2432,14 @@
             const engageRange = e.engageRangeX ?? 6.2;
             const attackRange = e.attackRangeX ?? 4.4;
             const currentHorizontal = Math.abs(playerX - e.x);
-            if (horizontalToHome > engageRange && currentHorizontal > engageRange) {
+            const heroNearHome = horizontalToHome <= engageRange;
+            const heroNearBat = currentHorizontal <= engageRange;
+            const withinDetection = heroNearHome || heroNearBat;
+            if (!withinDetection) {
               e.comboRemaining = 0;
               e.nextAttackAt = Math.max(e.nextAttackAt, now + 420);
             }
-            if (now >= e.nextAttackAt && e.comboRemaining > 0) {
+            if (withinDetection && now >= e.nextAttackAt && e.comboRemaining > 0) {
               if (currentHorizontal <= attackRange) {
                 e.state = 'attack';
                 e.attackDidSpawn = false;
@@ -2452,10 +2456,8 @@
                   e.sizeUnits * 0.35,
                   Math.min(e.sizeUnits * 1.1, baseWave + Math.max(0, 0.6 - lateral) * 0.45)
                 );
-                const followX = attackDef.followX ?? 4.6;
-                const followY = attackDef.followY ?? 3.2;
                 const launchDir = Math.sign(aimX - e.x);
-                const fallbackDir = Math.sign(dx) || (e.facing >= 0 ? 1 : -1);
+                const fallbackDir = e.facing >= 0 ? 1 : -1;
                 e.attackPath = {
                   startX: e.x,
                   startY: e.y,
@@ -2468,9 +2470,7 @@
                   clampMin,
                   clampMax,
                   waveAmp,
-                  waveDir: launchDir !== 0 ? launchDir : fallbackDir,
-                  followX,
-                  followY
+                  waveDir: launchDir !== 0 ? launchDir : fallbackDir
                 };
                 const hitFrac = attackDef.hitFrac ?? 0.6;
                 e.attackHitAt = now + travelMs * hitFrac;
@@ -2498,42 +2498,21 @@
             }
             const clampMin = path.clampMin ?? (e.patrolMin ?? (e.homeX - 3));
             const clampMax = path.clampMax ?? (e.patrolMax ?? (e.homeX + 3));
-            if (path.followX) {
-              const desiredX = Math.max(clampMin + 0.15, Math.min(clampMax - 0.15, playerX));
-              const lerp = Math.min(1, Math.max(0, path.followX * dt));
-              path.targetX += (desiredX - path.targetX) * lerp;
-            }
-            if (path.followY) {
-              const floorY = centerFromFoot(e, -0.25);
-              const desiredY = Math.max(floorY, playerY + 0.1);
-              const lerp = Math.min(1, Math.max(0, path.followY * dt));
-              path.targetY += (desiredY - path.targetY) * lerp;
-            }
-            if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
-              path.targetX = Math.max(clampMin + 0.01, Math.min(clampMax - 0.01, path.targetX));
-            }
-            const dxToTarget = path.targetX - e.x;
-            if (Math.abs(dxToTarget) > 0.02) {
-              const dir = Math.sign(dxToTarget);
-              if (dir !== 0 && dir !== path.waveDir) path.waveDir = dir;
-            } else if (!path.waveDir) {
-              const towardPlayer = Math.sign(playerX - e.x) || 1;
-              path.waveDir = towardPlayer;
-            }
             const duration = path.duration ?? (attackDef.travelMs ?? 520);
             const elapsed = now - path.startTime;
             const tRaw = duration > 0 ? elapsed / duration : 1;
             const t = Math.min(1, Math.max(0, tRaw));
             const prevX = e.x;
-            const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
-            const baseX = path.startX + (path.targetX - path.startX) * t;
-            const waveDir = path.waveDir != null ? path.waveDir : (path.targetX >= path.startX ? 1 : -1);
-            if (path.waveDir == null && (path.targetX - path.startX) !== 0) {
-              path.waveDir = Math.sign(path.targetX - path.startX);
+            let waveDir = path.waveDir;
+            if (waveDir == null) {
+              waveDir = (path.targetX >= path.startX) ? 1 : -1;
+              path.waveDir = waveDir;
             }
+            const baseX = path.startX + (path.targetX - path.startX) * t;
             const waveAmp = path.waveAmp ?? (attackDef.waveAmp ?? 0);
             const wave = Math.sin(t * Math.PI) * waveAmp * (waveDir || 1);
             e.x = baseX + wave;
+            const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
             e.y = path.startY + (path.targetY - path.startY) * curve;
             if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
               e.x = Math.max(clampMin, Math.min(clampMax, e.x));
