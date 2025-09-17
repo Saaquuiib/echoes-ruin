@@ -1459,7 +1459,6 @@
         if (!list || list.length === 0) return null;
         return list[Math.floor(Math.random() * list.length)];
       }
-
       function updateEnemyFade(e, now) {
         if (!e) return;
         if (!e.deathAt || !e.sprite) return;
@@ -1483,7 +1482,6 @@
         }
         e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
       }
-
       const WOLF_COMBO_TABLE = {
         close: [
           ['bite'],
@@ -1836,7 +1834,6 @@
         e.attackPath = null;
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
-
     async function spawnWolf(x, footY, minX, maxX) {
         const e = {
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
@@ -2242,7 +2239,6 @@
           default:
             break;
         }
-
         if (e.state !== 'leap' && !e.onGround) {
           e.vy += e.gravity * dt;
         } else if (e.state === 'leap') {
@@ -2251,7 +2247,6 @@
 
         e.x += e.vx * dt;
         e.y += e.vy * dt;
-
         if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
           e.x = Math.max(e.patrolMin - 0.2, Math.min(e.patrolMax + 0.2, e.x));
         }
@@ -2307,7 +2302,6 @@
             }
           }
         }
-
         if (!dying && e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
