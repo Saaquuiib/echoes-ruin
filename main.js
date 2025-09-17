@@ -1813,7 +1813,6 @@
         e.animStart = performance.now();
         e.animDur = (meta.frames / meta.fps) * 1000;
       }
-
       function startBatDive(e, now, playerX, playerY) {
         const attackDef = BAT_ATTACK_DATA.dive;
         if (!attackDef) return false;
@@ -1866,7 +1865,6 @@
         e.comboRemaining = Math.max(0, e.comboRemaining - 1);
         return true;
       }
-
       function finalizeWolfDeath(e, now = performance.now()) {
         if (!e || e.dead) return;
         e.pendingLandingState = null;
@@ -2650,7 +2648,6 @@
           default:
             break;
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
