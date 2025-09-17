@@ -2322,7 +2322,6 @@
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
@@ -2455,6 +2454,8 @@
                 );
                 const followX = attackDef.followX ?? 4.6;
                 const followY = attackDef.followY ?? 3.2;
+                const launchDir = Math.sign(aimX - e.x);
+                const fallbackDir = Math.sign(dx) || (e.facing >= 0 ? 1 : -1);
                 e.attackPath = {
                   startX: e.x,
                   startY: e.y,
@@ -2467,7 +2468,7 @@
                   clampMin,
                   clampMax,
                   waveAmp,
-                  waveDir: e.facing >= 0 ? 1 : -1,
+                  waveDir: launchDir !== 0 ? launchDir : fallbackDir,
                   followX,
                   followY
                 };
@@ -2510,6 +2511,14 @@
             }
             if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
               path.targetX = Math.max(clampMin + 0.01, Math.min(clampMax - 0.01, path.targetX));
+            }
+            const dxToTarget = path.targetX - e.x;
+            if (Math.abs(dxToTarget) > 0.02) {
+              const dir = Math.sign(dxToTarget);
+              if (dir !== 0 && dir !== path.waveDir) path.waveDir = dir;
+            } else if (!path.waveDir) {
+              const towardPlayer = Math.sign(playerX - e.x) || 1;
+              path.waveDir = towardPlayer;
             }
             const duration = path.duration ?? (attackDef.travelMs ?? 520);
             const elapsed = now - path.startTime;
@@ -2607,6 +2616,7 @@
           default:
             break;
         }
+
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
