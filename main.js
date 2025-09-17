@@ -2607,7 +2607,6 @@
           default:
             break;
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
