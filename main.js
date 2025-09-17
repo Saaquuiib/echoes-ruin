@@ -1509,9 +1509,10 @@
           durationMs: 190,
           damage: 12,
           poise: 14,
-          width: e => e.sizeUnits * 0.62,
+          width: e => e.sizeUnits * 0.54,
           height: e => e.sizeUnits * 0.42,
-          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.05 }),
+          offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
+          maxRange: 1.05,
           forwardImpulse: 2.2,
           comboGapMs: 130,
           recoveryMs: 340,
@@ -1523,9 +1524,10 @@
           durationMs: 200,
           damage: 15,
           poise: 16,
-          width: e => e.sizeUnits * 0.72,
-          height: e => e.sizeUnits * 0.52,
-          offset: e => ({ x: e.sizeUnits * 0.42, y: -e.sizeUnits * 0.02 }),
+          width: e => e.sizeUnits * 0.6,
+          height: e => e.sizeUnits * 0.5,
+          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
+          maxRange: 1.25,
           forwardImpulse: 2.6,
           comboGapMs: 160,
           recoveryMs: 420,
@@ -1566,7 +1568,7 @@
         else if (e.packRole === 'flankRight') target = playerX + 1.9;
         else if (e.packRole === 'leader') target = playerX - sign * 1.05;
         else target = playerX - sign * 2.2;
-        if (e.patrolMin !== undefined && e.patrolMax !== undefined) {
+        if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
           target = Math.max(e.patrolMin, Math.min(e.patrolMax, target));
         }
         return target;
@@ -1595,6 +1597,10 @@
           pool = WOLF_COMBO_TABLE.close
             .filter(seq => seq && !seq.includes('leap'))
             .map(seq => seq.slice());
+        }
+        if (distance > 1.8) {
+          const withLeap = pool.filter(seq => seq && seq.includes('leap'));
+          if (withLeap.length > 0) pool = withLeap.map(seq => seq.slice());
         }
         const choice = randChoice(pool);
         return choice ? choice.slice() : [];
@@ -1630,8 +1636,23 @@
 
       function startWolfAttack(e, name) {
         const def = WOLF_ATTACK_DATA[name];
-        if (!def) return false;
         const now = performance.now();
+        if (!def) return false;
+        if (def.type !== 'maneuver' && def.maxRange != null) {
+          const playerPos = playerSprite.sprite?.position;
+          const playerX = playerPos?.x;
+          if (playerX == null || Math.abs(playerX - e.x) > def.maxRange) {
+            e.state = 'stalk';
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = now;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            e.nextComboAt = Math.max(e.nextComboAt, now + 180);
+            return 'defer';
+          }
+        }
         const attack = { name, def, start: now, spawned: false };
         e.currentAttack = attack;
         if (def.type === 'maneuver') {
@@ -1737,7 +1758,13 @@
         const frameH = sheetH;
         if (computeBaseline) {
           const baselinePx = await detectBaselinePx(img, sheetW, sheetH, frames, frameW, frameH);
-          e.baselineUnits = baselinePx / PPU;
+          const baselineUnits = baselinePx / PPU;
+          if (!e.baselines) e.baselines = {};
+          e.baselines[name] = baselineUnits;
+          if (!e._baselineInit) {
+            e.baselineUnits = baselineUnits;
+            e._baselineInit = true;
+          }
         }
         e.sizeUnits = frameH / PPU;
         const mgr = new BABYLON.SpriteManager(`${e.type}_${name}`, url, 1, { width: frameW, height: frameH }, scene);
@@ -1752,7 +1779,19 @@
         if (!meta) return;
         if (e.anim === name && e.sprite) return;
         const pos = e.sprite ? e.sprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
+        const prevBaseline = e.baselineUnits;
+        const prevCenterY = pos.y;
+        const footY = prevBaseline != null ? (prevCenterY - (e.sizeUnits * 0.5) + prevBaseline) : null;
         if (e.sprite) e.sprite.dispose();
+        const nextBaseline = e.baselines?.[name];
+        if (nextBaseline != null) {
+          e.baselineUnits = nextBaseline;
+          if (footY != null) {
+            const newCenter = footY + (e.sizeUnits * 0.5) - e.baselineUnits;
+            e.y = newCenter;
+            pos.y = newCenter;
+          }
+        }
         const sp = new BABYLON.Sprite(`${e.type}_${name}`, meta.mgr);
         sp.size = e.sizeUnits;
         sp.position = pos;
@@ -1813,10 +1852,10 @@
         };
         await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
         await loadEnemySheet(e, 'ready', 'assets/sprites/wolf/Ready.png', 12, true);
-        await loadEnemySheet(e, 'bite', 'assets/sprites/wolf/Bite.png', 12, false);
-        await loadEnemySheet(e, 'claw', 'assets/sprites/wolf/Claw.png', 12, false);
-        await loadEnemySheet(e, 'hit', 'assets/sprites/wolf/Hit.png', 12, false);
-        await loadEnemySheet(e, 'dead', 'assets/sprites/wolf/Dead.png', 12, false);
+        await loadEnemySheet(e, 'bite', 'assets/sprites/wolf/Bite.png', 12, false, true);
+        await loadEnemySheet(e, 'claw', 'assets/sprites/wolf/Claw.png', 12, false, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/wolf/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/wolf/Dead.png', 12, false, true);
         await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
         await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
         await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
@@ -1947,6 +1986,7 @@
           comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
           attackDidSpawn: false, attackPath: null, reboundTarget: { x, y: 0 },
           homeX: x, hitReactUntil: 0,
+          awakened: false,
           staggered: false, staggerUntil: 0,
           pendingLandingState: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
@@ -1955,11 +1995,11 @@
           dead: false, combat: null, hurtbox: null
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
-        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false);
-        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true);
-        await loadEnemySheet(e, 'attack', 'assets/sprites/bat/Attack.png', 12, false);
-        await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false);
-        await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false);
+        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
+        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true, true);
+        await loadEnemySheet(e, 'attack', 'assets/sprites/bat/Attack.png', 12, false, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
         e.reboundTarget.y = e.y;
         e.nextAttackAt = performance.now() + 800;
@@ -2022,6 +2062,7 @@
             e.staggered = false;
             e.staggerUntil = 0;
             e.state = 'fly';
+            e.awakened = true;
             if (e.mgr.fly) setEnemyAnim(e, 'fly');
             e.nextAttackAt = now + 520;
             e.comboRemaining = Math.max(1, (Math.random() < 0.6 ? 2 : 1));
@@ -2127,8 +2168,16 @@
             e.facing = dx >= 0 ? 1 : -1;
             if (!dying && !e.pendingLandingState && now >= e.readyUntil) {
               const name = e.attackQueue[e.comboIndex];
-              if (!name || !startWolfAttack(e, name)) {
+              if (!name) {
                 finishWolfAttack(e);
+              } else {
+                const launch = startWolfAttack(e, name);
+                if (launch === 'defer') {
+                  break;
+                }
+                if (!launch) {
+                  finishWolfAttack(e);
+                }
               }
             }
             if (dying || e.pendingLandingState) {
@@ -2198,8 +2247,7 @@
 
         e.x += e.vx * dt;
         e.y += e.vy * dt;
-
-        if (e.patrolMin !== undefined && e.patrolMax !== undefined) {
+        if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
           e.x = Math.max(e.patrolMin - 0.2, Math.min(e.patrolMax + 0.2, e.x));
         }
 
@@ -2212,6 +2260,7 @@
         } else {
           e.onGround = false;
         }
+
         if (landed) {
           if (e.pendingLandingState) {
             const pending = e.pendingLandingState;
@@ -2253,7 +2302,6 @@
             }
           }
         }
-
         if (!dying && e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
@@ -2307,6 +2355,7 @@
 
         if (e.state === 'hit' && now >= e.hitReactUntil) {
           e.state = 'fly';
+          e.awakened = true;
           if (e.mgr.fly) setEnemyAnim(e, 'fly');
           e.nextAttackAt = now + 520;
           if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
@@ -2314,6 +2363,14 @@
 
         switch (e.state) {
           case 'sleep': {
+            if (e.awakened) {
+              e.state = 'fly';
+              e.awakened = true;
+              if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
+              e.nextAttackAt = Math.max(now + 420, e.nextAttackAt);
+              if (e.mgr.fly) setEnemyAnim(e, 'fly');
+              break;
+            }
             e.vx = 0;
             e.vy = 0;
             e.x += (e.homeX - e.x) * 0.08;
@@ -2327,6 +2384,7 @@
           case 'wake': {
             if (now >= (e.animStart + e.animDur - 1)) {
               e.state = 'fly';
+              e.awakened = true;
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
               e.comboRemaining = randChoice([1, 2, 2, 3]);
               e.nextAttackAt = now + 420;
@@ -2438,9 +2496,10 @@
                 if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
                 e.nextAttackAt = Math.max(now + 360, e.nextAttackAt);
               } else {
-                e.state = 'sleep';
-                if (e.mgr.sleep) setEnemyAnim(e, 'sleep');
-                e.nextAttackAt = now + 1200;
+                e.state = 'fly';
+                e.awakened = true;
+                if (e.mgr.fly) setEnemyAnim(e, 'fly');
+                e.nextAttackAt = Math.max(now + 720, e.nextAttackAt);
                 e.comboRemaining = 0;
               }
             }
