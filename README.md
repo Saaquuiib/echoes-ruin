@@ -456,7 +456,6 @@
 * **Browser perf variance.** Offer VFX Intensity slider; auto-reduce bloom on low FPS.
 * **Boss scope creep.** Ship P1 then layer P2/P3; reuse base moves with modifiers.
 * **Collision edge cases (slopes/elevators).** Early slope testbed; avoid concave ledges; generous ledge forgiveness.
-* **Licensing clarity.** Keep original license files in `/licenses/` and credit in About screen.
 
 ---
 
@@ -517,7 +516,6 @@
 /data/entities/.json
 /data/rooms/<biome>/.json
 /data/upgrades.json
-/licenses/*
 ```
 
 **Naming & states**
@@ -546,7 +544,6 @@ Stand up a zero-build, CDN-powered Babylon page with debug overlay and data stub
 - Add Babylon CDN `<script>` and minimal WebAudio init.
 - Debug overlay: FPS + toggles (colliders, slow-mo) — stubs OK.
 - Prepare JSON schemas for `/data` (entities/rooms/hitboxes) — docs for now.
-- Add `/licenses` and `third_party_attrib.json`.
 - Serve via **Live Server** (or `python -m http.server`) — not `file://`.
 
 **Deliverables**
