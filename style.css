@@ -1,6 +1,15 @@
 html, body { height:100%; margin:0; background:#000; }
 #game-canvas { width:100vw; height:100vh; display:block;
   image-rendering: pixelated; image-rendering: crisp-edges; }
+#hitbox-debug {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 600;
+}
 
 /* === HUD === */
 #hud {

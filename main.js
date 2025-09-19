@@ -2578,7 +2578,6 @@
         e.state = 'rebound';
         batSetDesiredAnim(e, 'fly', { force: true });
       }
-
       function updateBat(e, dt) {
         const now = performance.now();
         updateEnemyFade(e, now);
@@ -2698,6 +2697,7 @@
             e.vy = 0;
             e.x += (e.homeX - e.x) * 0.08;
             e.y = centerFromFoot(e, e.hover);
+
             if ((e.awakened || playerWithinAggro) && now >= e.nextAttackAt) {
               e.state = 'wake';
               e.awakened = true;
@@ -3043,9 +3043,6 @@
           e.sprite.invertU = (e.facing < 0);
         }
       }
-
-
-
 
       function updateEnemies(dt) {
         assignWolfPackRoles();
