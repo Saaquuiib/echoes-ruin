@@ -1558,9 +1558,13 @@
           height: e => e.sizeUnits * 0.46,
           offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
           cooldownMs: 900,
-          followX: 4.6,
+          followX: 7.4,
           followY: 3.2,
-          waveAmp: 0.78
+          waveAmp: 0.96,
+          minHorizontal: 1.05,
+          minWave: 0.58,
+          maxWave: 1.68,
+          targetChase: 0.22
         }
       };
 
@@ -1969,6 +1973,130 @@
         return true;
       }
 
+      function getBatHorizontalBounds(e) {
+        const engage = e.engageRangeX;
+        let clampMin = Number.isFinite(e.patrolMin) ? e.patrolMin : (e.homeX - 3);
+        let clampMax = Number.isFinite(e.patrolMax) ? e.patrolMax : (e.homeX + 3);
+        if (Number.isFinite(engage)) {
+          const detectMin = e.homeX - engage;
+          const detectMax = e.homeX + engage;
+          clampMin = Math.min(clampMin, detectMin);
+          clampMax = Math.max(clampMax, detectMax);
+        }
+        if (!Number.isFinite(clampMin)) clampMin = e.homeX - 3;
+        if (!Number.isFinite(clampMax)) clampMax = e.homeX + 3;
+        if (clampMax < clampMin) {
+          const mid = e.homeX || 0;
+          clampMin = Math.min(clampMin, mid);
+          clampMax = Math.max(clampMax, mid);
+        }
+        return { min: clampMin, max: clampMax };
+      }
+
+      function clampBatX(e, value, bounds = getBatHorizontalBounds(e), usePad = true) {
+        const clampMin = bounds?.min;
+        const clampMax = bounds?.max;
+        if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+          if (clampMax <= clampMin) return clampMin;
+          if (!usePad) return Math.max(clampMin, Math.min(clampMax, value));
+          const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+          const innerMin = clampMin + edgePad;
+          const innerMax = clampMax - edgePad;
+          if (innerMax <= innerMin) {
+            return Math.max(clampMin, Math.min(clampMax, value));
+          }
+          return Math.max(innerMin, Math.min(innerMax, value));
+        }
+        return value;
+      }
+
+      function startBatDive(e, now, playerX, playerY) {
+        const attackDef = BAT_ATTACK_DATA.dive;
+        if (!attackDef) return false;
+        const bounds = getBatHorizontalBounds(e);
+        const startX = e.x;
+        const startY = e.y;
+        const followX = attackDef.followX ?? 4.6;
+        const followY = attackDef.followY ?? 3.2;
+        const desiredTarget = clampBatX(e, playerX, bounds, false);
+        const dxToPlayer = desiredTarget - startX;
+        let targetX = desiredTarget;
+        if (Number.isFinite(followX)) {
+          const limitedDx = Math.max(-followX, Math.min(followX, targetX - startX));
+          targetX = startX + limitedDx;
+        }
+        targetX = clampBatX(e, targetX, bounds, false);
+        const minHorizontal = attackDef.minHorizontal ?? 0.9;
+        if (Math.abs(targetX - startX) < minHorizontal) {
+          let preferDir = 0;
+          if (dxToPlayer > 0.01) preferDir = 1;
+          else if (dxToPlayer < -0.01) preferDir = -1;
+          else if (playerX - startX > 0.01) preferDir = 1;
+          else if (playerX - startX < -0.01) preferDir = -1;
+          if (preferDir === 0) preferDir = e.facing >= 0 ? 1 : -1;
+          if (preferDir === 0) preferDir = Math.random() < 0.5 ? -1 : 1;
+          const lateralLead = Math.max(minHorizontal * 0.45, 0.6);
+          let altTarget = clampBatX(e, desiredTarget + preferDir * lateralLead, bounds, false);
+          if (Number.isFinite(followX)) {
+            const limitedDx = Math.max(-followX, Math.min(followX, altTarget - startX));
+            altTarget = startX + limitedDx;
+          }
+          if (Math.abs(altTarget - startX) < minHorizontal * 0.6) {
+            const fallbackLeadBase = minHorizontal + 0.6;
+            const fallbackLead = Number.isFinite(followX)
+              ? Math.min(followX, fallbackLeadBase)
+              : fallbackLeadBase;
+            altTarget = startX + preferDir * fallbackLead;
+          }
+          targetX = clampBatX(e, altTarget, bounds, false);
+        }
+        const floorCenter = centerFromFoot(e, -0.08);
+        const maxDrop = Math.max(0.25, Math.min(followY, startY - floorCenter));
+        let drop = startY - Math.min(playerY, startY - 0.2);
+        if (!Number.isFinite(drop) || drop <= 0.15) drop = 0.3;
+        drop = Math.min(drop, maxDrop);
+        drop = Math.max(Math.min(maxDrop, 0.25), drop);
+        let targetY = startY - drop;
+        if (targetY < floorCenter) targetY = floorCenter;
+        const travelMs = attackDef.travelMs ?? 520;
+        const hitFrac = Math.max(0.55, Math.min(0.92, attackDef.hitFrac ?? 0.78));
+        const waveBase = attackDef.waveAmp ?? 0.78;
+        const minWave = attackDef.minWave ?? waveBase * 0.6;
+        const maxWave = attackDef.maxWave ?? waveBase * 1.6;
+        const horizontalSpan = Math.abs(targetX - startX);
+        const computedWave = horizontalSpan * 0.55 + waveBase * 0.3;
+        const waveAmp = Math.max(minWave, Math.min(maxWave, computedWave));
+        let waveDir = 0;
+        if (targetX > startX + 0.01) waveDir = 1;
+        else if (targetX < startX - 0.01) waveDir = -1;
+        else if (dxToPlayer > 0.01) waveDir = 1;
+        else if (dxToPlayer < -0.01) waveDir = -1;
+        if (waveDir === 0) waveDir = e.facing >= 0 ? 1 : -1;
+        e.state = 'attack';
+        e.attackDidSpawn = false;
+        e.dive = {
+          startTime: now,
+          duration: travelMs,
+          startX,
+          startY,
+          targetX,
+          targetY,
+          waveAmp,
+          waveDir,
+          hitFrac
+        };
+        e.rebound = null;
+        e.attackHitAt = now + travelMs * hitFrac;
+        e.attackEndAt = now + travelMs;
+        e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
+        e.vx = 0;
+        e.vy = 0;
+        e.facing = waveDir >= 0 ? 1 : -1;
+        if (e.mgr.attack) setEnemyAnim(e, attackDef.anim || 'attack');
+        e.comboRemaining = Math.max(0, e.comboRemaining - 1);
+        return true;
+      }
+
       function finalizeWolfDeath(e, now = performance.now()) {
         if (!e || e.dead) return;
         e.pendingLandingState = null;
@@ -2150,11 +2278,12 @@
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           alignToFoot: false,
-          engageRangeX: 6.2, engageRangeY: 3.4, attackRangeX: 4.4, disengageRangeX: 7.8, wakeRange: 5.0,
+          engageRangeX: 9.5, engageRangeY: 4.2, attackRangeX: 6.4, disengageRangeX: 12.0, wakeRange: 7.2,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
           comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
           attackDidSpawn: false, dive: null, rebound: null, reboundTarget: { x, y: 0 },
           homeX: x, hitReactUntil: 0,
+          orbitOffset: 2.8,
           awakened: false,
           staggered: false, staggerUntil: 0,
           pendingLandingState: null,
@@ -2576,10 +2705,11 @@
             const yLerp = Math.min(1, dt * 7);
             e.y += (targetY - e.y) * yLerp;
             const bounds = getBatHorizontalBounds(e);
-            const desiredRaw = playerX + (dx >= 0 ? -0.6 : 0.6);
+            const orbit = e.orbitOffset ?? 2.8;
+            const desiredRaw = playerX + (dx >= 0 ? -orbit : orbit);
             const desiredX = clampBatX(e, desiredRaw, bounds, false);
             const diff = desiredX - e.x;
-            const speed = Math.abs(diff) > 1.2 ? 2.2 : 1.8;
+            const speed = Math.abs(diff) > 2.2 ? 3.4 : 2.4;
             if (Math.abs(diff) > 0.05) {
               e.vx = Math.sign(diff) * speed;
               e.x += e.vx * dt;
@@ -2630,16 +2760,32 @@
               e.vy = 0;
               break;
             }
+            const bounds = getBatHorizontalBounds(e);
             const duration = dive.duration ?? (attackDef?.travelMs ?? 520);
             const elapsed = now - dive.startTime;
             const t = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
+            const chaseFactor = attackDef?.targetChase ?? 0;
+            if (chaseFactor > 0.0001) {
+              const desired = clampBatX(e, playerX, bounds, false);
+              const blend = Math.max(0.06, Math.min(0.35, chaseFactor * (1 - t * 0.5)));
+              const nextTarget = dive.targetX + (desired - dive.targetX) * blend;
+              const clampedNext = clampBatX(e, nextTarget, bounds, false);
+              if (Math.abs(clampedNext - dive.targetX) > 0.002) {
+                dive.targetX = clampedNext;
+              }
+              const waveAim = dive.targetX - e.x;
+              if (Math.abs(waveAim) > 0.02) {
+                dive.waveDir = waveAim > 0 ? 1 : -1;
+              } else {
+                dive.waveDir = desired >= e.x ? 1 : -1;
+              }
+            }
             const ease = t * t;
             const prevX = e.x;
             const baseX = dive.startX + (dive.targetX - dive.startX) * ease;
             const waveAmp = dive.waveAmp ?? 0;
             const waveDir = dive.waveDir ?? (dive.targetX >= dive.startX ? 1 : -1);
             const wave = Math.sin(t * Math.PI) * waveAmp * (waveDir || 1);
-            const bounds = getBatHorizontalBounds(e);
             e.x = clampBatX(e, baseX + wave, bounds);
             const dropCurve = ease;
             e.y = dive.startY + (dive.targetY - dive.startY) * dropCurve;
@@ -2660,9 +2806,13 @@
             if (t >= 1) {
               e.state = 'rebound';
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              const offset = (Math.random() - 0.5) * 1.8;
+              const orbit = e.orbitOffset ?? 2.8;
+              const sidePref = dive.waveDir ?? (playerX >= e.x ? 1 : -1);
+              const side = sidePref >= 0 ? 1 : -1;
+              const jitter = (Math.random() - 0.5) * Math.min(orbit * 0.6, 1.4);
+              const offset = side * orbit + jitter;
               const hoverY = centerFromFoot(e, e.hover + 0.2);
-              const targetX = clampBatX(e, playerX + offset, bounds);
+              const targetX = clampBatX(e, playerX + offset, bounds, false);
               e.reboundTarget.x = targetX;
               e.reboundTarget.y = hoverY;
               e.rebound = {
