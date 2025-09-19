@@ -1559,6 +1559,14 @@
         }
       };
 
+      const BAT_AGGRO_RADIUS = 6;
+      const BAT_AGGRO_HYSTERESIS = 1;
+      const BAT_LEASH_RADIUS = 11;
+      const BAT_VIEW_MARGIN = 0.5;
+      const BAT_MELEE_RANGE = 0.95;
+      const BAT_DIVE_COOLDOWN_MS = 1200;
+      const BAT_ATTACK_ACTIVE_FRAMES = { start: 3, end: 7 };
+
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
         const dx = playerX - e.x;
@@ -1711,23 +1719,31 @@
         }
       }
 
-      function spawnBatHitbox(e, def) {
-        if (!e.combat || !def || e.dying) return;
-        const width = typeof def.width === 'function' ? def.width(e) : def.width;
-        const height = typeof def.height === 'function' ? def.height(e) : def.height;
-        const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
-        Combat.spawnHitbox(e.combat, {
+      function spawnBatHitbox(e, def, overrides = {}) {
+        if (!e.combat || !def || e.dying) return null;
+        const width = overrides.width ?? (typeof def.width === 'function' ? def.width(e) : def.width);
+        const height = overrides.height ?? (typeof def.height === 'function' ? def.height(e) : def.height);
+        const offsetDefault = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
+        const offset = overrides.offset ?? offsetDefault;
+        const duration = overrides.durationMs ?? def.durationMs ?? 120;
+        const getOrigin = overrides.getOrigin || (() => ({ x: e.x, y: e.y }));
+        const onHit = overrides.onHit || null;
+        const onExpire = overrides.onExpire || null;
+        const hitbox = Combat.spawnHitbox(e.combat, {
           shape: 'rect',
           width: width ?? 0,
           height: height ?? 0,
           offset,
-          durationMs: def.durationMs ?? 120,
+          durationMs: duration,
           damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
           poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
-          getOrigin: () => ({ x: e.x, y: e.y }),
+          getOrigin,
           getFacing: () => e.facing,
-          meta: { enemy: 'bat', attack: 'dive' }
+          meta: { enemy: 'bat', attack: 'dive' },
+          onHit,
+          onExpire
         });
+        return hitbox;
       }
 
       function assignWolfPackRoles() {
@@ -1774,22 +1790,40 @@
         e.mgr[name] = { mgr, frames, fps, loop };
       }
 
-      function setEnemyAnim(e, name) {
+      function setEnemyAnim(e, name, opts = {}) {
         const meta = e.mgr[name];
         if (!meta) return;
-        if (e.anim === name && e.sprite) return;
+        const force = !!opts.force;
+        if (!force && e.anim === name && e.sprite) return;
+        const preserveAnchor = !!opts.preserveAnchor;
+        const anchorOverride = opts.anchor || null;
         const pos = e.sprite ? e.sprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
-        const prevBaseline = e.baselineUnits;
-        const prevCenterY = pos.y;
-        const footY = prevBaseline != null ? (prevCenterY - (e.sizeUnits * 0.5) + prevBaseline) : null;
+        let footY = null;
+        if (!preserveAnchor) {
+          const prevBaseline = e.baselineUnits;
+          const prevCenterY = pos.y;
+          footY = prevBaseline != null ? (prevCenterY - (e.sizeUnits * 0.5) + prevBaseline) : null;
+        }
         if (e.sprite) e.sprite.dispose();
         const nextBaseline = e.baselines?.[name];
         if (nextBaseline != null) {
           e.baselineUnits = nextBaseline;
-          if (footY != null) {
+          if (!preserveAnchor && footY != null) {
             const newCenter = footY + (e.sizeUnits * 0.5) - e.baselineUnits;
             e.y = newCenter;
             pos.y = newCenter;
+          }
+        }
+        if (preserveAnchor) {
+          const anchor = anchorOverride || e.anchor || { x: e.x, y: e.y };
+          if (anchor.x != null) pos.x = anchor.x;
+          if (anchor.y != null) pos.y = anchor.y;
+          e.x = pos.x;
+          e.y = pos.y;
+          if (!e.anchor) e.anchor = { x: pos.x, y: pos.y };
+          else {
+            e.anchor.x = pos.x;
+            e.anchor.y = pos.y;
           }
         }
         const sp = new BABYLON.Sprite(`${e.type}_${name}`, meta.mgr);
@@ -1802,6 +1836,10 @@
         e.anim = name;
         e.animStart = performance.now();
         e.animDur = (meta.frames / meta.fps) * 1000;
+        if (preserveAnchor && e.anchor) {
+          e.anchor.x = sp.position.x;
+          e.anchor.y = sp.position.y;
+        }
       }
 
       function finalizeWolfDeath(e, now = performance.now()) {
@@ -1984,7 +2022,8 @@
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
           comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
-          attackDidSpawn: false, attackPath: null, reboundTarget: { x, y: 0 },
+          attackPath: null, reboundTarget: { x, y: 0 },
+          attackHitbox: null, attackHitLanded: false,
           homeX: x, hitReactUntil: 0,
           awakened: false,
           staggered: false, staggerUntil: 0,
@@ -1992,7 +2031,14 @@
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           fallGravity: -26,
-          dead: false, combat: null, hurtbox: null
+          dead: false, combat: null, hurtbox: null,
+          anchor: { x, y: 0 },
+          spawnAnchor: { x, y: 0 },
+          idleHoverX: x,
+          aggro: false,
+          desiredAnimName: '', desiredAnimOpts: null, desiredAnimForce: false,
+          animLockUntil: 0, animLockName: null,
+          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
@@ -2002,6 +2048,11 @@
         await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
         e.reboundTarget.y = e.y;
+        e.anchor.x = e.x;
+        e.anchor.y = e.y;
+        e.spawnAnchor.x = e.x;
+        e.spawnAnchor.y = e.y;
+        e.idleHoverX = e.x;
         e.nextAttackAt = performance.now() + 800;
         setEnemyAnim(e, 'sleep');
         const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
@@ -2035,13 +2086,14 @@
             const now = performance.now();
             e.lastHitAt = now;
             if (e.dying || e.dead || event?.staggered) return;
-            e.state = 'hit';
-            e.hitReactUntil = now + 200;
-            if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            e.attackDidSpawn = false;
-            e.attackPath = null;
-            e.attackHitAt = 0;
-            e.attackEndAt = 0;
+            e.hitReactUntil = now + 220;
+            e.animLockUntil = e.hitReactUntil;
+            e.animLockName = 'hit';
+            if (e.mgr.hit) setEnemyAnim(e, 'hit', { preserveAnchor: true, force: true });
+            if (e.attackHitbox) {
+              e.attackHitbox.markRemove = true;
+              e.attackHitbox = null;
+            }
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
           },
           onStagger: () => {
@@ -2051,11 +2103,14 @@
             e.state = 'stagger';
             e.vx = 0; e.vy = 0;
             e.comboRemaining = 0;
-            if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            e.animLockUntil = combatActor.staggeredUntil;
+            e.animLockName = 'hit';
+            if (e.mgr.hit) setEnemyAnim(e, 'hit', { preserveAnchor: true, force: true });
             e.attackPath = null;
-            e.attackDidSpawn = false;
-            e.attackHitAt = 0;
-            e.attackEndAt = 0;
+            if (e.attackHitbox) {
+              e.attackHitbox.markRemove = true;
+              e.attackHitbox = null;
+            }
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 720);
           },
           onStaggerEnd: ({ now }) => {
@@ -2063,7 +2118,9 @@
             e.staggerUntil = 0;
             e.state = 'fly';
             e.awakened = true;
-            if (e.mgr.fly) setEnemyAnim(e, 'fly');
+            e.animLockUntil = 0;
+            e.animLockName = null;
+            if (e.mgr.fly) setEnemyAnim(e, 'fly', { preserveAnchor: true, force: true });
             e.nextAttackAt = now + 520;
             e.comboRemaining = Math.max(1, (Math.random() < 0.6 ? 2 : 1));
           },
@@ -2074,8 +2131,11 @@
             e.deathAt = now;
             e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
             e.comboRemaining = 0;
-            e.attackDidSpawn = false;
             e.attackPath = null;
+            if (e.attackHitbox) {
+              e.attackHitbox.markRemove = true;
+              e.attackHitbox = null;
+            }
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
@@ -2314,6 +2374,64 @@
         }
       }
 
+      function getCameraViewBounds() {
+        const left = camera.position.x + (camera.orthoLeft ?? -ORTHO_VIEW_HEIGHT * 0.5);
+        const right = camera.position.x + (camera.orthoRight ?? ORTHO_VIEW_HEIGHT * 0.5);
+        const top = camera.position.y + (camera.orthoTop ?? ORTHO_VIEW_HEIGHT * 0.5);
+        const bottom = camera.position.y + (camera.orthoBottom ?? -ORTHO_VIEW_HEIGHT * 0.5);
+        return { left, right, top, bottom };
+      }
+
+      function batShouldPreserveAnchor(state) {
+        return state === 'fly' || state === 'attack' || state === 'rebound' || state === 'stagger' || state === 'hit';
+      }
+
+      function batSetDesiredAnim(e, name, opts = {}) {
+        const finalOpts = { ...opts };
+        if (finalOpts.preserveAnchor === undefined) {
+          finalOpts.preserveAnchor = batShouldPreserveAnchor(name);
+        }
+        e.desiredAnimName = name;
+        e.desiredAnimOpts = finalOpts;
+        e.desiredAnimForce = !!finalOpts.force;
+        if (finalOpts.force) {
+          finalOpts.force = false;
+        }
+      }
+
+      function batCommitDesiredAnim(e, now) {
+        if (e.animLockUntil && now >= e.animLockUntil) {
+          e.animLockUntil = 0;
+          e.animLockName = null;
+        }
+        const name = e.desiredAnimName;
+        if (!name) return;
+        const locked = e.animLockUntil && now < e.animLockUntil;
+        if (locked && e.animLockName && e.animLockName !== name) {
+          return;
+        }
+        const opts = { ...(e.desiredAnimOpts || {}) };
+        if (e.desiredAnimForce) {
+          opts.force = true;
+        }
+        setEnemyAnim(e, name, opts);
+        e.desiredAnimForce = false;
+      }
+
+      function getBatDiveSocketPosition(e, now = performance.now()) {
+        const path = e.attackPath;
+        if (!path) return { x: e.x, y: e.y };
+        const meta = e.mgr?.attack;
+        const animDuration = path.animDuration || (meta ? ((meta.frames / meta.fps) * 1000) : path.duration || 0);
+        const animStart = path.animStart ?? path.startTime ?? now;
+        const elapsed = Math.max(0, now - animStart);
+        const animT = animDuration > 0 ? Math.min(1, elapsed / animDuration) : 0;
+        const facing = e.facing >= 0 ? 1 : -1;
+        const forward = e.sizeUnits * (0.22 + 0.24 * animT);
+        const vertical = -e.sizeUnits * (0.1 + 0.18 * Math.sin(animT * Math.PI));
+        return { x: e.x + forward * facing, y: e.y + vertical };
+      }
+
       function updateBat(e, dt) {
         const now = performance.now();
         updateEnemyFade(e, now);
@@ -2350,58 +2468,91 @@
             e.sprite.position.y = e.y;
             e.sprite.invertU = (e.facing < 0);
           }
+          if (e.anchor) {
+            e.anchor.x = e.x;
+            e.anchor.y = e.y;
+          }
           return;
         }
 
-        if (e.state === 'hit' && now >= e.hitReactUntil) {
-          e.state = 'fly';
+        const viewBounds = getCameraViewBounds();
+        const playerInView = playerX >= viewBounds.left - BAT_VIEW_MARGIN &&
+          playerX <= viewBounds.right + BAT_VIEW_MARGIN &&
+          playerY >= viewBounds.bottom - BAT_VIEW_MARGIN &&
+          playerY <= viewBounds.top + BAT_VIEW_MARGIN;
+        const spawnDist = Math.hypot(playerX - e.spawnAnchor.x, playerY - e.spawnAnchor.y);
+        const releaseDist = BAT_AGGRO_RADIUS + BAT_AGGRO_HYSTERESIS;
+        const shouldAggro = playerInView && dist <= BAT_AGGRO_RADIUS;
+        if (shouldAggro) {
+          e.aggro = true;
           e.awakened = true;
-          if (e.mgr.fly) setEnemyAnim(e, 'fly');
-          e.nextAttackAt = now + 520;
-          if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
+        }
+        const leashBreak = spawnDist > BAT_LEASH_RADIUS;
+        if (e.aggro && (dist > releaseDist || !playerInView || leashBreak)) {
+          e.aggro = false;
+          e.idleHoverX = e.x;
+          e.comboRemaining = 0;
+          e.nextAttackAt = Math.max(e.nextAttackAt, now + 600);
+          if (e.state === 'attack') {
+            e.state = 'rebound';
+            e.reboundTarget.x = e.x;
+            e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
+            e.attackPath = null;
+          }
+          if (e.attackHitbox) {
+            e.attackHitbox.markRemove = true;
+            e.attackHitbox = null;
+          }
+        }
+
+        if (e.hitReactUntil && now >= e.hitReactUntil) {
+          e.hitReactUntil = 0;
         }
 
         switch (e.state) {
           case 'sleep': {
-            if (e.awakened) {
-              e.state = 'fly';
-              e.awakened = true;
-              if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
-              e.nextAttackAt = Math.max(now + 420, e.nextAttackAt);
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              break;
-            }
+            batSetDesiredAnim(e, 'sleep', { preserveAnchor: false });
             e.vx = 0;
             e.vy = 0;
             e.x += (e.homeX - e.x) * 0.08;
             e.y = centerFromFoot(e, e.hover);
-            if (dist < 5 && now >= e.nextAttackAt) {
+            if ((e.awakened || shouldAggro) && now >= e.nextAttackAt) {
               e.state = 'wake';
-              if (e.mgr.wake) setEnemyAnim(e, 'wake');
+              e.awakened = true;
+              e.nextAttackAt = now + 200;
+              batSetDesiredAnim(e, 'wake', { preserveAnchor: false, force: true });
             }
             break;
           }
           case 'wake': {
+            batSetDesiredAnim(e, 'wake', { preserveAnchor: false });
+            e.y = centerFromFoot(e, e.hover);
             if (now >= (e.animStart + e.animDur - 1)) {
               e.state = 'fly';
               e.awakened = true;
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              e.comboRemaining = randChoice([1, 2, 2, 3]);
+              if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
               e.nextAttackAt = now + 420;
+              batSetDesiredAnim(e, 'fly', { force: true });
             }
-            e.y = centerFromFoot(e, e.hover);
             break;
           }
           case 'fly': {
+            batSetDesiredAnim(e, 'fly');
             e.bob += dt * 2.2;
             const hover = e.hover + Math.sin(e.bob) * 0.35;
             e.y = centerFromFoot(e, hover);
             const clampMin = e.patrolMin ?? (e.homeX - 3);
             const clampMax = e.patrolMax ?? (e.homeX + 3);
-            const targetX = Math.max(clampMin, Math.min(clampMax, playerX + (dx >= 0 ? -0.6 : 0.6)));
+            let targetX;
+            if (e.aggro) {
+              const offset = dx >= 0 ? -0.6 : 0.6;
+              targetX = Math.max(clampMin, Math.min(clampMax, playerX + offset));
+            } else {
+              targetX = Math.max(clampMin, Math.min(clampMax, e.idleHoverX));
+            }
             const diff = targetX - e.x;
-            const speed = 1.8;
-            if (Math.abs(diff) > 0.1) {
+            const speed = e.aggro ? 1.8 : 1.1;
+            if (Math.abs(diff) > 0.05) {
               e.vx = Math.sign(diff) * speed;
               e.x += e.vx * dt;
             } else {
@@ -2409,15 +2560,19 @@
             }
             e.facing = diff >= 0 ? 1 : -1;
             if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
-            if (now >= e.nextAttackAt && e.comboRemaining > 0) {
-              e.state = 'attack';
-              e.attackDidSpawn = false;
-              e.comboRemaining -= 1;
-              if (e.mgr.attack) setEnemyAnim(e, 'attack');
+            const readyForDive = e.aggro && playerInView && now >= e.nextAttackAt && e.comboRemaining > 0;
+            if (readyForDive) {
               const attackDef = BAT_ATTACK_DATA.dive;
               const travelMs = attackDef.travelMs ?? 520;
-              e.attackHitAt = now + travelMs * (attackDef.hitFrac ?? 0.5);
-              e.attackEndAt = now + travelMs;
+              const attackMeta = e.mgr.attack;
+              const animDuration = attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : travelMs;
+              e.state = 'attack';
+              e.attackHitLanded = false;
+              if (e.attackHitbox) {
+                e.attackHitbox.markRemove = true;
+                e.attackHitbox = null;
+              }
+              e.comboRemaining -= 1;
               const floorY = centerFromFoot(e, -0.25);
               const aimX = playerX;
               const aimY = Math.max(floorY, playerY + 0.1);
@@ -2427,24 +2582,27 @@
                 targetX: aimX,
                 targetY: aimY,
                 startTime: now,
-                duration: travelMs
+                duration: travelMs,
+                animStart: now,
+                animDuration: animDuration
               };
-              e.vx = 0;
-              e.vy = 0;
-              e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
+              e.nextAttackAt = now + BAT_DIVE_COOLDOWN_MS;
+              batSetDesiredAnim(e, 'attack', { force: true });
             }
             break;
           }
           case 'attack': {
+            batSetDesiredAnim(e, 'attack');
             const attackDef = BAT_ATTACK_DATA.dive;
             const path = e.attackPath;
             if (!path) {
               e.state = 'rebound';
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
               e.reboundTarget.x = e.x;
               e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
-              e.vx = 0;
-              e.vy = 0;
+              if (e.attackHitbox) {
+                e.attackHitbox.markRemove = true;
+                e.attackHitbox = null;
+              }
               break;
             }
             const duration = path.duration ?? (attackDef.travelMs ?? 520);
@@ -2452,31 +2610,71 @@
             const tRaw = duration > 0 ? elapsed / duration : 1;
             const t = Math.min(1, Math.max(0, tRaw));
             const prevX = e.x;
-            const curve = Math.sin(Math.min(Math.PI / 2, t * Math.PI / 2));
+            const curve = Math.sin(Math.min(Math.PI * 0.5, t * Math.PI * 0.5));
             e.x = path.startX + (path.targetX - path.startX) * t;
             e.y = path.startY + (path.targetY - path.startY) * curve;
             const minCenter = centerFromFoot(e, -0.1);
             if (e.y < minCenter) e.y = minCenter;
             e.facing = e.x >= prevX ? 1 : -1;
-            if (!e.attackDidSpawn && e.attackHitAt && now >= e.attackHitAt) {
-              spawnBatHitbox(e, attackDef);
-              e.attackDidSpawn = true;
+            const attackMeta = e.mgr.attack;
+            const frames = attackMeta?.frames ?? 12;
+            const animDuration = path.animDuration || (attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : duration);
+            const animElapsed = now - (path.animStart ?? path.startTime);
+            const animT = animDuration > 0 ? Math.min(1, Math.max(0, animElapsed / animDuration)) : t;
+            const frameFloat = frames > 0 ? animT * frames : 0;
+            const frameIndex = Math.max(0, Math.min(frames - 1, Math.floor(frameFloat)));
+            const inActiveWindow = frameIndex >= BAT_ATTACK_ACTIVE_FRAMES.start && frameIndex <= BAT_ATTACK_ACTIVE_FRAMES.end;
+            const socketPos = getBatDiveSocketPosition(e, now);
+            const socketDist = Math.hypot(playerX - socketPos.x, playerY - socketPos.y);
+            const frameDuration = frames > 0 ? animDuration / frames : (attackDef.durationMs ?? 120);
+            if (!e.attackHitLanded && inActiveWindow && socketDist <= BAT_MELEE_RANGE) {
+              if (!e.attackHitbox) {
+                const remainingFrames = Math.max(1, BAT_ATTACK_ACTIVE_FRAMES.end - frameIndex + 1);
+                const durationMs = Math.max(attackDef.durationMs ?? 60, frameDuration * remainingFrames);
+                const hitbox = spawnBatHitbox(e, attackDef, {
+                  offset: { x: 0, y: 0 },
+                  durationMs,
+                  getOrigin: () => getBatDiveSocketPosition(e),
+                  onHit: () => {
+                    e.attackHitLanded = true;
+                    if (e.attackHitbox === hitbox) {
+                      e.attackHitbox.markRemove = true;
+                      e.attackHitbox = null;
+                    }
+                    e.nextAttackAt = Math.max(e.nextAttackAt, performance.now() + BAT_DIVE_COOLDOWN_MS);
+                  },
+                  onExpire: () => {
+                    if (e.attackHitbox === hitbox) {
+                      e.attackHitbox = null;
+                    }
+                  }
+                });
+                e.attackHitbox = hitbox;
+              }
+            } else if (e.attackHitbox && (!inActiveWindow || socketDist > BAT_MELEE_RANGE || e.attackHitLanded)) {
+              e.attackHitbox.markRemove = true;
+              e.attackHitbox = null;
             }
             if (t >= 1) {
+              if (!e.attackHitLanded) {
+                e.nextAttackAt = Math.max(e.nextAttackAt, now + BAT_DIVE_COOLDOWN_MS);
+              }
               e.state = 'rebound';
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
               const offset = (Math.random() - 0.5) * 2.2;
               const clampMin = e.patrolMin ?? (e.homeX - 3);
               const clampMax = e.patrolMax ?? (e.homeX + 3);
               e.reboundTarget.x = Math.max(clampMin, Math.min(clampMax, playerX + offset));
               e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
               e.attackPath = null;
-              e.vx = 0;
-              e.vy = 0;
+              if (e.attackHitbox) {
+                e.attackHitbox.markRemove = true;
+                e.attackHitbox = null;
+              }
             }
             break;
           }
           case 'rebound': {
+            batSetDesiredAnim(e, 'fly');
             const rx = e.reboundTarget.x - e.x;
             const ry = e.reboundTarget.y - e.y;
             const distR = Math.hypot(rx, ry);
@@ -2490,34 +2688,45 @@
             } else {
               e.x = e.reboundTarget.x;
               e.y = e.reboundTarget.y;
-              if (dist <= 7.5) {
+              if (e.aggro && playerInView) {
                 e.state = 'fly';
-                if (e.mgr.fly) setEnemyAnim(e, 'fly');
                 if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
                 e.nextAttackAt = Math.max(now + 360, e.nextAttackAt);
+                batSetDesiredAnim(e, 'fly', { force: true });
               } else {
                 e.state = 'fly';
-                e.awakened = true;
-                if (e.mgr.fly) setEnemyAnim(e, 'fly');
                 e.nextAttackAt = Math.max(now + 720, e.nextAttackAt);
                 e.comboRemaining = 0;
+                batSetDesiredAnim(e, 'fly', { force: true });
               }
             }
             break;
           }
           case 'stagger': {
+            batSetDesiredAnim(e, 'hit', { preserveAnchor: true });
             e.vx = 0;
             e.vy = 0;
             break;
           }
           case 'hit': {
-            e.vx = 0;
-            e.vy = 0;
+            batSetDesiredAnim(e, 'hit', { preserveAnchor: true });
             break;
           }
           default:
             break;
         }
+
+        if (e.attackHitbox && e.state !== 'attack') {
+          e.attackHitbox.markRemove = true;
+          e.attackHitbox = null;
+        }
+
+        if (e.anchor) {
+          e.anchor.x = e.x;
+          e.anchor.y = e.y;
+        }
+
+        batCommitDesiredAnim(e, now);
 
         if (e.sprite) {
           e.sprite.position.x = e.x;
@@ -2525,6 +2734,7 @@
           e.sprite.invertU = (e.facing < 0);
         }
       }
+
 
       function updateEnemies(dt) {
         assignWolfPackRoles();
