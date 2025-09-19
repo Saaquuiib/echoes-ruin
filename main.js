@@ -1776,6 +1776,74 @@
         e.animStart = performance.now();
         e.animDur = (meta.frames / meta.fps) * 1000;
       }
+      function startBatDive(e, now, playerX, playerY) {
+        const attackDef = BAT_ATTACK_DATA.dive;
+        if (!attackDef) return false;
+        const clampMin = e.patrolMin ?? (e.homeX - 3);
+        const clampMax = e.patrolMax ?? (e.homeX + 3);
+        const startX = e.x;
+        const startY = e.y;
+        const followX = attackDef.followX ?? 4.6;
+        const followY = attackDef.followY ?? 3.2;
+        const limitedDx = Math.max(-followX, Math.min(followX, playerX - startX));
+        const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+        let targetX = startX + limitedDx;
+        if (Number.isFinite(clampMin)) targetX = Math.max(clampMin + edgePad, targetX);
+        if (Number.isFinite(clampMax)) targetX = Math.min(clampMax - edgePad, targetX);
+        const floorCenter = centerFromFoot(e, -0.08);
+        const maxDrop = Math.max(0.25, Math.min(followY, startY - floorCenter));
+        let drop = startY - Math.min(playerY, startY - 0.2);
+        if (!Number.isFinite(drop) || drop <= 0.15) drop = 0.3;
+        drop = Math.min(drop, maxDrop);
+        drop = Math.max(Math.min(maxDrop, 0.25), drop);
+        let targetY = startY - drop;
+        if (targetY < floorCenter) targetY = floorCenter;
+        const travelMs = attackDef.travelMs ?? 520;
+        const hitFrac = Math.max(0.55, Math.min(0.92, attackDef.hitFrac ?? 0.78));
+        const waveBase = attackDef.waveAmp ?? 0.78;
+        const horizontalSpan = Math.abs(targetX - startX);
+        const waveAmp = Math.min(waveBase * 1.6, Math.max(waveBase * 0.45, horizontalSpan * 0.55 + 0.12));
+        const waveDir = (targetX >= startX) ? 1 : -1;
+        e.state = 'attack';
+        e.attackDidSpawn = false;
+        e.dive = {
+          startTime: now,
+          duration: travelMs,
+          startX,
+          startY,
+          targetX,
+          targetY,
+          waveAmp,
+          waveDir,
+          hitFrac
+        };
+        e.rebound = null;
+        e.attackHitAt = now + travelMs * hitFrac;
+        e.attackEndAt = now + travelMs;
+        e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
+        e.vx = 0;
+        e.vy = 0;
+        e.facing = waveDir >= 0 ? 1 : -1;
+        if (e.mgr.attack) setEnemyAnim(e, attackDef.anim || 'attack');
+        e.comboRemaining = Math.max(0, e.comboRemaining - 1);
+        return true;
+      }
+      function finalizeWolfDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.onGround = true;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        e.leapState = null;
+        e.attackQueue = [];
+        e.currentAttack = null;
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
 
       function getBatHorizontalBounds(e) {
         const engage = e.engageRangeX;
@@ -2215,6 +2283,8 @@
           e.baselineUnits = sleepBaseline;
         }
         e.y = centerFromFoot(e, footY);
+        e.reboundTarget.y = e.y;
+        e.nextAttackAt = performance.now() + 800;
         setEnemyAnim(e, 'sleep');
         const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
         const mat = new BABYLON.StandardMaterial('dbgMatBat', scene);
@@ -2590,7 +2660,6 @@
           e.awakened = true;
           if (e.mgr.fly) setEnemyAnim(e, 'fly');
         }
-
         switch (e.state) {
           case 'sleep': {
             if (e.awakened) {
