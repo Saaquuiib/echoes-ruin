@@ -89,6 +89,24 @@
     }
   }
 
+  function scaleFrameDefinitions(frames, scale) {
+    if (!frames) return null;
+    return frames.map(def => {
+      if (!def) return null;
+      const next = { ...def };
+      if (def.width != null) next.width = def.width * scale;
+      if (def.height != null) next.height = def.height * scale;
+      if (def.radius != null) next.radius = def.radius * scale;
+      if (def.offset) {
+        next.offset = {
+          x: (def.offset.x ?? 0) * scale,
+          y: (def.offset.y ?? 0) * scale
+        };
+      }
+      return next;
+    });
+  }
+
   const Combat = (() => {
     let actorSeq = 1;
     let hurtSeq = 1;
@@ -96,6 +114,47 @@
     const actors = new Map();
     const hurtboxes = new Map();
     const hitboxes = [];
+    const debugShapes = [];
+    let debugCallback = null;
+
+    function setDebugCallback(fn) {
+      debugCallback = typeof fn === 'function' ? fn : null;
+    }
+
+    function getActorAnimState(actor) {
+      if (!actor || typeof actor.getAnimationState !== 'function') return null;
+      try {
+        const state = actor.getAnimationState(actor);
+        if (!state) return null;
+        const frameIndex = typeof state.frameIndex === 'number' ? state.frameIndex : 0;
+        const frameCount = typeof state.frameCount === 'number' ? state.frameCount : undefined;
+        return {
+          name: state.name || null,
+          frameIndex,
+          frameCount,
+          animation: state.name || null
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    function resolveFrameDef(defs, frameIndex) {
+      if (!defs) return null;
+      if (Array.isArray(defs)) {
+        const idx = Math.max(0, Math.min(defs.length - 1, Math.round(frameIndex)));
+        const entry = defs[idx];
+        return entry ?? null;
+      }
+      if (typeof defs === 'object') {
+        const idx = Math.round(frameIndex);
+        if (defs[idx] != null) return defs[idx];
+        const key = String(idx);
+        if (defs[key] != null) return defs[key];
+        if (defs.default != null) return defs.default;
+      }
+      return null;
+    }
 
     function resolveActor(ref) {
       if (!ref) return null;
@@ -128,9 +187,13 @@
         poise: Math.max(0, Math.min(initialPoise, basePoise || initialPoise)),
         poiseResetDelayMs: config.poiseResetDelayMs ?? 1200,
         poiseRegenPerSec: config.poiseRegenPerSec ?? 0,
+        poiseRegenDurationMs: config.poiseRegenDurationMs ?? config.poiseRegenDuration ?? 1800,
         staggerDurationMs: config.staggerDurationMs ?? 600,
         staggeredUntil: 0,
         lastPoiseDamageAt: 0,
+        poiseLastHitAt: 0,
+        poiseRegenStartAt: 0,
+        poiseRegenFrom: Math.max(0, Math.min(initialPoise, basePoise || initialPoise)),
         invulnFlags: new Map(),
         hurtboxes: new Map(),
         alive: true,
@@ -144,7 +207,9 @@
         onStagger: config.onStagger || null,
         onStaggerEnd: config.onStaggerEnd || null,
         data: config.data || {},
-        meta: config.meta || {}
+        meta: config.meta || {},
+        getAnimationState: config.getAnimationState || null,
+        getSocketPosition: config.getSocketPosition || null
       };
       actor.hpMax = actor.hpMax || actor.hp;
       actor.hp = Math.min(actor.hpMax, actor.hp);
@@ -225,40 +290,63 @@
     function spawnHitbox(actorRef, config = {}) {
       const actor = resolveActor(actorRef);
       if (!actor) throw new Error('Combat.spawnHitbox: actor not found.');
-      const id = config.id || `hit_${hitSeq++}`;
+      const frameDefs = Array.isArray(config)
+        ? config
+        : (Array.isArray(config.frames) || (config.frames && typeof config.frames === 'object'))
+          ? config.frames
+          : null;
+      const baseConfig = Array.isArray(config) ? {} : config;
+      const id = baseConfig.id || `hit_${hitSeq++}`;
       const now = performance.now();
-      const delay = Math.max(0, config.delayMs || 0);
-      const duration = Math.max(0, config.durationMs != null ? config.durationMs : 0);
+      const delay = Math.max(0, baseConfig.delayMs || 0);
+      const duration = Math.max(0, baseConfig.durationMs != null ? baseConfig.durationMs : 0);
+      const baseOffset = {
+        x: baseConfig.offset?.x ?? baseConfig.size?.offset?.x ?? 0,
+        y: baseConfig.offset?.y ?? baseConfig.size?.offset?.y ?? 0
+      };
+      const baseWidth = baseConfig.width ?? baseConfig.size?.width ?? 0;
+      const baseHeight = baseConfig.height ?? baseConfig.size?.height ?? 0;
+      const baseRadius = baseConfig.radius ?? baseConfig.size?.radius ?? 0;
+      const socket = baseConfig.socket || null;
       const hitbox = {
         id,
         actor,
-        team: config.team || actor.team,
-        shape: config.shape || 'rect',
-        width: config.width ?? config.size?.width ?? 0,
-        height: config.height ?? config.size?.height ?? 0,
-        radius: config.radius ?? config.size?.radius ?? 0,
-        offset: { x: config.offset?.x ?? 0, y: config.offset?.y ?? 0 },
-        mirror: config.mirror !== false,
-        getOrigin: config.getOrigin || null,
-        getFacing: config.getFacing || null,
-        absolute: !!config.absolute,
-        damage: config.damage ?? 0,
-        poise: config.poise ?? config.stagger ?? 0,
-        pierce: !!config.pierce,
-        friendlyFire: !!config.friendlyFire,
-        ignoreInvuln: !!config.ignoreInvuln,
-        applyDamage: config.applyDamage !== undefined ? !!config.applyDamage : true,
-        applyPoise: config.applyPoise !== undefined ? !!config.applyPoise : true,
+        team: baseConfig.team || actor.team,
+        shape: baseConfig.shape || (baseRadius > 0 ? 'circle' : 'rect'),
+        width: baseWidth,
+        height: baseHeight,
+        radius: baseRadius,
+        offset: { x: baseOffset.x, y: baseOffset.y },
+        mirror: baseConfig.mirror !== false,
+        getOrigin: baseConfig.getOrigin || null,
+        getFacing: baseConfig.getFacing || null,
+        absolute: !!baseConfig.absolute,
+        damage: baseConfig.damage ?? 0,
+        poise: baseConfig.poise ?? baseConfig.stagger ?? 0,
+        pierce: !!baseConfig.pierce,
+        friendlyFire: !!baseConfig.friendlyFire,
+        ignoreInvuln: !!baseConfig.ignoreInvuln,
+        applyDamage: baseConfig.applyDamage !== undefined ? !!baseConfig.applyDamage : true,
+        applyPoise: baseConfig.applyPoise !== undefined ? !!baseConfig.applyPoise : true,
         activateAt: now + delay,
         expiresAt: now + delay + duration,
         durationMs: duration,
-        meta: config.meta || null,
-        onHit: config.onHit || null,
-        onExpire: config.onExpire || null,
+        meta: baseConfig.meta || null,
+        onHit: baseConfig.onHit || null,
+        onExpire: baseConfig.onExpire || null,
         alreadyHit: new Set(),
         hitCount: 0,
         didHit: false,
-        markRemove: false
+        markRemove: false,
+        socket,
+        frameDefs,
+        frameDefault: baseConfig.frameDefault || null,
+        debug: baseConfig.debug !== undefined ? !!baseConfig.debug : true,
+        baseWidth,
+        baseHeight,
+        baseRadius,
+        baseOffset,
+        baseSocket: socket
       };
       hitboxes.push(hitbox);
       return hitbox;
@@ -268,26 +356,85 @@
       const actor = box.actor || null;
       const originFn = box.getOrigin || actor?.getOrigin;
       const facingFn = box.getFacing || actor?.getFacing;
-      const origin = originFn ? originFn(actor) : { x: 0, y: 0 };
+      const baseOrigin = originFn ? originFn(actor) : { x: 0, y: 0 };
       const facing = box.mirror === false ? 1 : (facingFn ? facingFn(actor) : 1);
-      const offsetX = (box.offset?.x || 0) * (box.absolute ? 1 : facing);
-      const offsetY = box.offset?.y || 0;
-      const center = { x: origin.x + offsetX, y: origin.y + offsetY };
-      if (box.shape === 'circle') {
-        const radius = Math.max(0, box.radius || 0);
-        return { type: 'circle', center, radius };
+      const baseOffset = box.baseOffset || box.offset || { x: 0, y: 0 };
+      const animState = actor ? getActorAnimState(actor) : null;
+      const frameIndex = animState ? animState.frameIndex || 0 : 0;
+      const hasFrameDefs = Array.isArray(box.frameDefs)
+        ? box.frameDefs.length > 0
+        : (box.frameDefs && typeof box.frameDefs === 'object');
+      let frameDef = null;
+      if (hasFrameDefs) {
+        const resolved = resolveFrameDef(box.frameDefs, frameIndex);
+        if (resolved != null) {
+          frameDef = resolved;
+        } else if (box.frameDefault) {
+          frameDef = box.frameDefault;
+        } else {
+          return null;
+        }
+      } else if (box.frameDefault) {
+        frameDef = box.frameDefault;
       }
-      const width = Math.max(0, box.width || 0);
-      const height = Math.max(0, box.height || 0);
+
+      let shapeType = box.shape || 'rect';
+      let width = box.baseWidth ?? box.width ?? 0;
+      let height = box.baseHeight ?? box.height ?? 0;
+      let radius = box.baseRadius ?? box.radius ?? 0;
+      let offsetX = baseOffset.x ?? 0;
+      let offsetY = baseOffset.y ?? 0;
+      let socketName = box.socket ?? box.baseSocket ?? null;
+      if (frameDef && typeof frameDef === 'object') {
+        if (frameDef.shape) shapeType = frameDef.shape;
+        if (frameDef.width != null) width = frameDef.width;
+        if (frameDef.height != null) height = frameDef.height;
+        if (frameDef.radius != null) radius = frameDef.radius;
+        if (frameDef.offset) {
+          if (frameDef.offset.x != null) offsetX = frameDef.offset.x;
+          if (frameDef.offset.y != null) offsetY = frameDef.offset.y;
+        }
+        if (Object.prototype.hasOwnProperty.call(frameDef, 'socket')) {
+          socketName = frameDef.socket;
+        }
+      }
+      let origin = baseOrigin;
+      if (socketName && actor && typeof actor.getSocketPosition === 'function') {
+        try {
+          const socketPos = actor.getSocketPosition({
+            socket: socketName,
+            animation: animState?.name || animState?.animation || null,
+            frameIndex,
+            frameCount: animState?.frameCount,
+            facing
+          });
+          if (socketPos && Number.isFinite(socketPos.x) && Number.isFinite(socketPos.y)) {
+            origin = socketPos;
+          }
+        } catch {
+          // ignore socket resolution errors to avoid breaking combat
+        }
+      }
+      const finalOffsetX = (offsetX || 0) * (box.absolute ? 1 : facing);
+      const finalOffsetY = offsetY || 0;
+      const center = { x: (origin?.x ?? 0) + finalOffsetX, y: (origin?.y ?? 0) + finalOffsetY };
+      if (shapeType === 'circle' || (radius > 0 && shapeType !== 'rect')) {
+        const r = Math.max(0, radius || 0);
+        return { type: 'circle', center, radius: r, team: box.team, id: box.id };
+      }
+      const w = Math.max(0, width || 0);
+      const h = Math.max(0, height || 0);
       return {
         type: 'rect',
         center,
-        width,
-        height,
-        minX: center.x - width * 0.5,
-        maxX: center.x + width * 0.5,
-        minY: center.y - height * 0.5,
-        maxY: center.y + height * 0.5
+        width: w,
+        height: h,
+        minX: center.x - w * 0.5,
+        maxX: center.x + w * 0.5,
+        minY: center.y - h * 0.5,
+        maxY: center.y + h * 0.5,
+        team: box.team,
+        id: box.id
       };
     }
 
@@ -358,6 +505,9 @@
       const prev = actor.poise;
       actor.poise = Math.max(0, prev - amount);
       actor.lastPoiseDamageAt = now;
+      actor.poiseLastHitAt = now;
+      actor.poiseRegenStartAt = 0;
+      actor.poiseRegenFrom = actor.poise;
       let broke = false;
       if (actor.poise <= 0 && actor.poiseMax > 0 && actor.staggeredUntil <= now) {
         actor.staggeredUntil = now + actor.staggerDurationMs;
@@ -395,34 +545,53 @@
 
     function update(dt, now = performance.now()) {
       const activeActors = Array.from(actors.values());
+      debugShapes.length = 0;
       for (const actor of activeActors) {
         actorInvulnerable(actor, now);
         if (!actor.alive) continue;
         if (actor.staggeredUntil > 0 && now >= actor.staggeredUntil) {
           actor.staggeredUntil = 0;
-          if (actor.poiseMax > 0 && actor.poise < actor.poiseMax) {
-            const prev = actor.poise;
-            actor.poise = actor.poiseMax;
-            actor.lastPoiseDamageAt = now;
-            if (actor.poise !== prev && actor.onPoiseChange) {
-              actor.onPoiseChange(actor.poise, { actor, now, refill: true });
-            }
-          }
+          actor.poiseLastHitAt = now;
+          actor.poiseRegenStartAt = 0;
+          actor.poiseRegenFrom = actor.poise;
           if (actor.onStaggerEnd) actor.onStaggerEnd({ actor, now });
         }
-        if (actor.poiseMax > 0 && actor.poise < actor.poiseMax && actor.staggeredUntil <= 0) {
-          const elapsed = now - actor.lastPoiseDamageAt;
-          if (actor.poiseResetDelayMs <= 0 || elapsed >= actor.poiseResetDelayMs) {
-            const prev = actor.poise;
-            if (actor.poiseRegenPerSec > 0) {
-              actor.poise = Math.min(actor.poiseMax, actor.poise + actor.poiseRegenPerSec * dt);
+        if (actor.poiseMax > 0 && actor.poise < actor.poiseMax) {
+          if (actor.staggeredUntil > now) {
+            actor.poiseRegenStartAt = 0;
+            actor.poiseRegenFrom = actor.poise;
+          } else {
+            const delay = Math.max(0, actor.poiseResetDelayMs || 0);
+            const lastHit = actor.poiseLastHitAt || actor.lastPoiseDamageAt || 0;
+            if (delay <= 0 || now >= lastHit + delay) {
+              if (!actor.poiseRegenStartAt) {
+                actor.poiseRegenStartAt = now;
+                actor.poiseRegenFrom = actor.poise;
+              }
+              const duration = Math.max(0, actor.poiseRegenDurationMs || 0);
+              let next = actor.poiseMax;
+              if (duration > 0) {
+                const t = Math.max(0, Math.min(1, (now - actor.poiseRegenStartAt) / duration));
+                next = actor.poiseRegenFrom + (actor.poiseMax - actor.poiseRegenFrom) * t;
+              }
+              const prev = actor.poise;
+              actor.poise = Math.min(actor.poiseMax, next);
+              if (Math.abs(actor.poise - prev) > 1e-4 && actor.onPoiseChange) {
+                actor.onPoiseChange(actor.poise, { actor, now, regen: true });
+              }
+              if (actor.poise >= actor.poiseMax - 1e-4) {
+                actor.poise = actor.poiseMax;
+                actor.poiseRegenStartAt = 0;
+                actor.poiseRegenFrom = actor.poise;
+              }
             } else {
-              actor.poise = actor.poiseMax;
-            }
-            if (actor.poise !== prev && actor.onPoiseChange) {
-              actor.onPoiseChange(actor.poise, { actor, now, regen: true });
+              actor.poiseRegenStartAt = 0;
+              actor.poiseRegenFrom = actor.poise;
             }
           }
+        } else if (actor.poise >= actor.poiseMax) {
+          actor.poiseRegenStartAt = 0;
+          actor.poiseRegenFrom = actor.poise;
         }
       }
 
@@ -435,6 +604,13 @@
         if (now < hitbox.activateAt) continue;
         const expired = now > hitbox.expiresAt;
         const hitShape = computeShape(hitbox);
+        if (hitShape && hitbox.debug !== false) {
+          if (hitShape.type === 'rect') {
+            debugShapes.push({ ...hitShape });
+          } else if (hitShape.type === 'circle') {
+            debugShapes.push({ ...hitShape });
+          }
+        }
         if (!hitShape) continue;
         for (const hurtbox of hurtList) {
           if (hurtbox.actor === hitbox.actor) continue;
@@ -517,6 +693,9 @@
         hitboxes.length = 0;
         hitboxes.push(...survivors);
       }
+      if (debugCallback) {
+        try { debugCallback(debugShapes); } catch (err) { console.warn('Combat debug callback error', err); }
+      }
     }
 
     return {
@@ -531,7 +710,8 @@
       clearInvulnerability,
       isInvulnerable,
       update,
-      actors
+      actors,
+      setDebugCallback
     };
   })();
 
@@ -543,6 +723,8 @@
     scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
     const glow = new BABYLON.GlowLayer('glow', scene);
     glow.intensity = 0.6;
+    const hitboxDebugCanvas = document.getElementById('hitbox-debug');
+    const hitboxDebugCtx = hitboxDebugCanvas ? hitboxDebugCanvas.getContext('2d') : null;
 
     // ---- WebAudio ----
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -798,6 +980,15 @@
       hp: stats.hp,
       getPosition: () => ({ x: placeholder.position.x, y: placeholder.position.y }),
       getFacing: () => state.facing,
+      getAnimationState: () => {
+        const anim = playerSprite.state;
+        const sprite = playerSprite.sprite;
+        const meta = SHEETS[anim];
+        const frameCount = meta?.frames ?? (sprite ? sprite.cellIndex + 1 : 0);
+        const frameIndex = sprite ? Math.floor(sprite.cellIndex ?? 0) : 0;
+        return { name: anim, frameIndex, frameCount };
+      },
+      getSocketPosition: getPlayerSocketPosition,
       processHit: (event) => {
         if (state.dead) { event.cancelled = true; return; }
         if (state.blocking) {
@@ -903,6 +1094,93 @@
       color: new BABYLON.Color4(0, 0, 0, 0)
     };
 
+    const PLAYER_SOCKET_LIBRARY = {
+      light1: [
+        { weapon_tip: { x: 0.28, y: 0.18 } },
+        { weapon_tip: { x: 0.52, y: 0.12 } },
+        { weapon_tip: { x: 0.68, y: 0.04 } },
+        { weapon_tip: { x: 0.64, y: -0.04 } }
+      ],
+      light2: [
+        { weapon_tip: { x: 0.26, y: 0.2 } },
+        { weapon_tip: { x: 0.58, y: 0.1 } },
+        { weapon_tip: { x: 0.82, y: 0.02 } },
+        { weapon_tip: { x: 0.74, y: -0.06 } }
+      ],
+      light3: [
+        { weapon_tip: { x: 0.24, y: 0.18 } },
+        { weapon_tip: { x: 0.58, y: 0.12 } },
+        { weapon_tip: { x: 0.92, y: 0.02 } },
+        { weapon_tip: { x: 1.04, y: -0.02 } },
+        { weapon_tip: { x: 1.0, y: -0.08 } },
+        { weapon_tip: { x: 0.88, y: -0.12 } }
+      ],
+      heavy: [
+        { weapon_tip: { x: 0.22, y: 0.22 } },
+        { weapon_tip: { x: 0.54, y: 0.16 } },
+        { weapon_tip: { x: 0.86, y: 0.08 } },
+        { weapon_tip: { x: 1.08, y: 0.0 } },
+        { weapon_tip: { x: 1.12, y: -0.08 } },
+        { weapon_tip: { x: 1.0, y: -0.16 } }
+      ]
+    };
+
+    const PLAYER_HITBOX_LIBRARY = {
+      light1: [
+        null,
+        { socket: 'weapon_tip', width: 0.36, height: 0.22, offset: { x: 0.08, y: -0.02 } },
+        { socket: 'weapon_tip', width: 0.42, height: 0.24, offset: { x: 0, y: -0.02 } },
+        { socket: 'weapon_tip', width: 0.36, height: 0.24, offset: { x: -0.04, y: -0.02 } }
+      ],
+      light2: [
+        null,
+        { socket: 'weapon_tip', width: 0.42, height: 0.24, offset: { x: 0.05, y: -0.02 } },
+        { socket: 'weapon_tip', width: 0.5, height: 0.26, offset: { x: -0.02, y: -0.04 } },
+        { socket: 'weapon_tip', width: 0.44, height: 0.24, offset: { x: -0.06, y: -0.04 } }
+      ],
+      light3: [
+        null,
+        { socket: 'weapon_tip', width: 0.44, height: 0.24, offset: { x: 0.04, y: -0.02 } },
+        { socket: 'weapon_tip', width: 0.58, height: 0.28, offset: { x: 0.02, y: -0.04 } },
+        { socket: 'weapon_tip', width: 0.64, height: 0.28, offset: { x: -0.02, y: -0.06 } },
+        { socket: 'weapon_tip', width: 0.6, height: 0.26, offset: { x: -0.1, y: -0.08 } },
+        { socket: 'weapon_tip', width: 0.5, height: 0.24, offset: { x: -0.12, y: -0.08 } }
+      ],
+      heavy: [
+        null,
+        { socket: 'weapon_tip', width: 0.46, height: 0.26, offset: { x: 0.06, y: -0.02 } },
+        { socket: 'weapon_tip', width: 0.62, height: 0.3, offset: { x: 0.04, y: -0.06 } },
+        { socket: 'weapon_tip', width: 0.76, height: 0.32, offset: { x: 0, y: -0.08 } },
+        { socket: 'weapon_tip', width: 0.82, height: 0.34, offset: { x: -0.06, y: -0.1 } },
+        { socket: 'weapon_tip', width: 0.68, height: 0.32, offset: { x: -0.08, y: -0.12 } }
+      ]
+    };
+
+    function getPlayerSocketPosition({ socket, animation, frameIndex, facing }) {
+      if (!socket) return null;
+      const animName = animation || playerSprite.state;
+      const frames = PLAYER_SOCKET_LIBRARY[animName];
+      if (!frames || frames.length === 0) return null;
+      const idx = Math.max(0, Math.min(frames.length - 1, Math.round(frameIndex ?? 0)));
+      const entry = frames[idx] || frames[frames.length - 1];
+      if (!entry || !entry[socket]) return null;
+      const socketDef = entry[socket];
+      const size = playerSprite.sizeByAnim[animName] ?? playerSprite.sizeUnits ?? 1;
+      const basePos = playerSprite.sprite ? playerSprite.sprite.position : placeholder.position;
+      const sign = facing >= 0 ? 1 : -1;
+      return {
+        x: basePos.x + (socketDef.x ?? 0) * size * sign,
+        y: basePos.y + (socketDef.y ?? 0) * size
+      };
+    }
+
+    function getPlayerHitboxFrames(name) {
+      const frames = PLAYER_HITBOX_LIBRARY[name];
+      if (!frames) return null;
+      const size = playerSprite.sizeByAnim[name] ?? playerSprite.sizeUnits ?? 1;
+      return scaleFrameDefinitions(frames, size);
+    }
+
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false, pendingHit: false, hitAt: 0, hitMeta: null };
     const heavy = {
@@ -931,6 +1209,7 @@
         width: 1.05,
         height: 1.2,
         offset: { x: 0.85, y: 0 },
+        socket: 'weapon_tip',
         damage: () => stats.lightDamage,
         poise: () => stats.lightStagger,
         durationMs: 110,
@@ -944,6 +1223,7 @@
         width: 1.1,
         height: 1.2,
         offset: { x: 0.9, y: 0 },
+        socket: 'weapon_tip',
         damage: () => stats.lightDamage,
         poise: () => stats.lightStagger,
         durationMs: 110,
@@ -957,6 +1237,7 @@
         width: 1.25,
         height: 1.25,
         offset: { x: 1.0, y: 0 },
+        socket: 'weapon_tip',
         damage: () => stats.lightFinisherDamage ?? stats.lightDamage,
         poise: () => stats.lightFinisherStagger ?? stats.lightStagger,
         durationMs: 120,
@@ -970,6 +1251,7 @@
         width: 1.5,
         height: 1.3,
         offset: { x: 1.1, y: 0 },
+        socket: 'weapon_tip',
         damage: () => heavy.releaseDamage,
         poise: () => heavy.releaseStagger,
         durationMs: 140,
@@ -1192,6 +1474,8 @@
         meta.shakeDurationMs,
         typeof attackDef.shakeDurationMs === 'function' ? attackDef.shakeDurationMs(meta) : attackDef.shakeDurationMs
       );
+      const frameDefs = getPlayerHitboxFrames(inferredId);
+      const socketName = attackDef.socket || 'weapon_tip';
 
       Combat.spawnHitbox(playerActor, {
         shape,
@@ -1204,6 +1488,8 @@
         poise: poiseVal,
         pierce,
         friendlyFire,
+        frames: frameDefs,
+        socket: socketName,
         meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
         onHit: (event) => {
           if (event.firstHit && event.hitLanded) {
@@ -1443,6 +1729,7 @@
       // === Enemies ===
       const enemies = [];
       let enemyDbg = false;
+      let wolfLeaderId = null;
       function toggleEnemyDebug() {
         enemyDbg = !enemyDbg;
         enemies.forEach(e => {
@@ -1482,6 +1769,91 @@
         }
         e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
       }
+      const WOLF_SOCKET_LIBRARY = {
+        bite: [
+          { jaw: { x: 0.24, y: -0.04 } },
+          { jaw: { x: 0.28, y: -0.04 } },
+          { jaw: { x: 0.32, y: -0.05 } },
+          { jaw: { x: 0.36, y: -0.06 } },
+          { jaw: { x: 0.42, y: -0.08 } },
+          { jaw: { x: 0.48, y: -0.08 } },
+          { jaw: { x: 0.5, y: -0.08 } },
+          { jaw: { x: 0.46, y: -0.08 } },
+          { jaw: { x: 0.4, y: -0.07 } },
+          { jaw: { x: 0.34, y: -0.06 } },
+          { jaw: { x: 0.28, y: -0.05 } },
+          { jaw: { x: 0.24, y: -0.04 } }
+        ],
+        claw: [
+          { claw: { x: 0.3, y: 0.05 } },
+          { claw: { x: 0.34, y: 0.06 } },
+          { claw: { x: 0.38, y: 0.05 } },
+          { claw: { x: 0.44, y: 0.02 } },
+          { claw: { x: 0.5, y: -0.02 } },
+          { claw: { x: 0.54, y: -0.04 } },
+          { claw: { x: 0.56, y: -0.05 } },
+          { claw: { x: 0.5, y: -0.04 } },
+          { claw: { x: 0.44, y: -0.02 } },
+          { claw: { x: 0.38, y: 0.0 } },
+          { claw: { x: 0.34, y: 0.02 } },
+          { claw: { x: 0.3, y: 0.04 } }
+        ]
+      };
+
+      const WOLF_HITBOX_LIBRARY = {
+        bite: [
+          null,
+          null,
+          { socket: 'jaw', width: 0.32, height: 0.24, offset: { x: 0.02, y: -0.02 } },
+          { socket: 'jaw', width: 0.34, height: 0.24, offset: { x: 0.02, y: -0.02 } },
+          { socket: 'jaw', width: 0.36, height: 0.24, offset: { x: 0, y: -0.02 } },
+          { socket: 'jaw', width: 0.34, height: 0.24, offset: { x: -0.02, y: -0.02 } },
+          { socket: 'jaw', width: 0.32, height: 0.24, offset: { x: -0.04, y: -0.02 } },
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        claw: [
+          null,
+          null,
+          { socket: 'claw', width: 0.36, height: 0.26, offset: { x: 0.04, y: 0.0 } },
+          { socket: 'claw', width: 0.4, height: 0.28, offset: { x: 0.02, y: -0.02 } },
+          { socket: 'claw', width: 0.42, height: 0.3, offset: { x: 0, y: -0.04 } },
+          { socket: 'claw', width: 0.4, height: 0.28, offset: { x: -0.02, y: -0.04 } },
+          { socket: 'claw', width: 0.34, height: 0.26, offset: { x: -0.04, y: -0.02 } },
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      };
+
+      function getWolfSocketPositionFor(e, { socket, animation, frameIndex, facing }) {
+        if (!e || !socket) return null;
+        const animName = animation || e.anim;
+        const frames = WOLF_SOCKET_LIBRARY[animName];
+        if (!frames || frames.length === 0) return null;
+        const idx = Math.max(0, Math.min(frames.length - 1, Math.round(frameIndex ?? 0)));
+        const entry = frames[idx] || frames[frames.length - 1];
+        if (!entry || !entry[socket]) return null;
+        const socketDef = entry[socket];
+        const size = e.sizeUnits ?? 1;
+        const sign = facing >= 0 ? 1 : -1;
+        return {
+          x: e.x + (socketDef.x ?? 0) * size * sign,
+          y: e.y + (socketDef.y ?? 0) * size
+        };
+      }
+
+      function getWolfHitboxFrames(name, sizeUnits) {
+        const frames = WOLF_HITBOX_LIBRARY[name];
+        if (!frames) return null;
+        return scaleFrameDefinitions(frames, sizeUnits);
+      }
+
       const WOLF_COMBO_TABLE = {
         close: [
           ['bite'],
@@ -1512,6 +1884,8 @@
           width: e => e.sizeUnits * 0.54,
           height: e => e.sizeUnits * 0.42,
           offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
+          socket: 'jaw',
+          frameHitboxes: WOLF_HITBOX_LIBRARY.bite,
           maxRange: 1.05,
           forwardImpulse: 2.2,
           comboGapMs: 130,
@@ -1527,6 +1901,8 @@
           width: e => e.sizeUnits * 0.6,
           height: e => e.sizeUnits * 0.5,
           offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
+          socket: 'claw',
+          frameHitboxes: WOLF_HITBOX_LIBRARY.claw,
           maxRange: 1.25,
           forwardImpulse: 2.6,
           comboGapMs: 160,
@@ -1540,7 +1916,10 @@
           maxDurationMs: 900,
           minAirTime: 0.28,
           landBufferMs: 140,
-          cooldownMs: 520
+          cooldownMs: 520,
+          gravity: 26,
+          apexHeight: 0.72,
+          maxAirAdjust: 3.5
         }
       };
 
@@ -1572,10 +1951,18 @@
         const dx = playerX - e.x;
         const sign = dx >= 0 ? 1 : -1;
         let target;
-        if (e.packRole === 'flankLeft') target = playerX - 1.9;
-        else if (e.packRole === 'flankRight') target = playerX + 1.9;
-        else if (e.packRole === 'leader') target = playerX - sign * 1.05;
-        else target = playerX - sign * 2.2;
+        if (e.packRole === 'leader') {
+          target = playerX - sign * 1.05;
+        } else if (e.packRole === 'flankLeft' || e.packRole === 'flankRight') {
+          const offset = typeof e.packOffset === 'number'
+            ? e.packOffset
+            : (e.packRole === 'flankLeft' ? -2 : 2);
+          target = playerX + offset;
+        } else if (typeof e.packOffset === 'number') {
+          target = playerX + e.packOffset;
+        } else {
+          target = playerX - sign * 2.2;
+        }
         if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
           target = Math.max(e.patrolMin, Math.min(e.patrolMax, target));
         }
@@ -1628,6 +2015,9 @@
         const width = typeof def.width === 'function' ? def.width(e) : def.width;
         const height = typeof def.height === 'function' ? def.height(e) : def.height;
         const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
+        const frameDefs = def.frameHitboxes
+          ? scaleFrameDefinitions(def.frameHitboxes, e.sizeUnits)
+          : getWolfHitboxFrames(def.anim, e.sizeUnits);
         Combat.spawnHitbox(e.combat, {
           shape: 'rect',
           width: width ?? 0,
@@ -1638,6 +2028,8 @@
           poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
           getOrigin: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
+          frames: frameDefs,
+          socket: def.socket || null,
           meta: { enemy: 'wolf', attack: e.currentAttack?.name || 'unknown' }
         });
       }
@@ -1665,15 +2057,35 @@
         e.currentAttack = attack;
         if (def.type === 'maneuver') {
           e.state = 'leap';
+          const playerPos = playerSprite.sprite?.position;
+          const targetX = computeWolfTargetX(e, playerPos?.x ?? e.x);
+          const groundY = centerFromFoot(e, 0);
+          const apex = def.apexHeight ?? 0.72;
+          const gravityMag = def.gravity ?? 26;
+          const vy = Math.sqrt(Math.max(0.01, 2 * gravityMag * apex));
+          const baseDuration = (2 * vy) / gravityMag;
+          const minAir = def.minAirTime ?? 0.3;
+          const durationSec = Math.max(minAir, baseDuration);
+          const durationMs = Math.min(def.maxDurationMs ?? durationSec * 1000, durationSec * 1000);
           e.leapState = {
             def,
             start: now,
-            endBy: now + (def.maxDurationMs ?? 800),
+            endBy: now + durationMs,
             airborneAt: now,
-            landedAt: 0
+            landedAt: 0,
+            startX: e.x,
+            startY: e.y,
+            targetX,
+            targetY: groundY,
+            gravity: -gravityMag,
+            vy,
+            duration: durationSec,
+            maxAirAdjust: def.maxAirAdjust ?? 4,
+            minAirTime: minAir
           };
-          e.vx = (def.forwardImpulse ?? 0) * e.facing;
-          e.vy = def.jumpVel ?? 0;
+          e.vx = 0;
+          e.vy = 0;
+          e.facing = targetX >= e.x ? 1 : -1;
           e.onGround = false;
           if (e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
         } else {
@@ -1748,22 +2160,69 @@
 
       function assignWolfPackRoles() {
         const wolves = enemies.filter(en => en.type === 'wolf' && !en.dead && !en.dying);
-        if (wolves.length === 0) return;
+        if (wolves.length === 0) {
+          wolfLeaderId = null;
+          return;
+        }
+        const now = performance.now();
         const playerX = playerSprite.sprite?.position.x ?? 0;
         let leader = null;
-        let best = Infinity;
-        for (const wolf of wolves) {
-          const dist = Math.abs(wolf.x - playerX);
-          if (dist < best) { leader = wolf; best = dist; }
+        if (wolfLeaderId) {
+          leader = wolves.find(w => w.id === wolfLeaderId && !w.staggered && !(w.staggerUntil && w.staggerUntil > now));
         }
-        wolves.forEach(w => { w.packRole = 'support'; });
-        if (leader) leader.packRole = 'leader';
-        const left = wolves.filter(w => w !== leader && w.x <= playerX)
-          .sort((a, b) => Math.abs(a.x - playerX) - Math.abs(b.x - playerX));
-        if (left.length > 0) left[0].packRole = 'flankLeft';
-        const right = wolves.filter(w => w !== leader && w.x > playerX)
-          .sort((a, b) => Math.abs(a.x - playerX) - Math.abs(b.x - playerX));
-        if (right.length > 0) right[0].packRole = 'flankRight';
+        if (!leader) {
+          if (wolves.length === 1) leader = wolves[0]; else leader = randChoice(wolves);
+          wolfLeaderId = leader ? leader.id : null;
+        }
+        if (!leader) return;
+        leader.packRole = 'leader';
+        leader.packOffset = 0;
+        leader.packOffsetBase = 0;
+        leader.packOffsetJitter = leader.packOffsetJitter ?? 0;
+
+        const flankers = wolves.filter(w => w !== leader);
+        const desiredLeft = Math.ceil(flankers.length / 2);
+        const left = [];
+        const right = [];
+        for (const wolf of flankers) {
+          let side = 0;
+          if (wolf.packRole === 'flankLeft') side = -1;
+          else if (wolf.packRole === 'flankRight') side = 1;
+          else if (wolf.x <= playerX) side = -1; else side = 1;
+          if (side < 0) left.push(wolf); else right.push(wolf);
+        }
+        while (left.length > desiredLeft) right.push(left.pop());
+        while (left.length < desiredLeft && right.length > 0) left.push(right.shift());
+
+        const applyFlank = (list, sign) => {
+          list.forEach((wolf, index) => {
+            const base = 2 + index * 0.6;
+            if (wolf.packRole !== (sign < 0 ? 'flankLeft' : 'flankRight') || wolf.packOffsetJitter == null) {
+              wolf.packOffsetJitter = (Math.random() - 0.5) * 0.4;
+            }
+            wolf.packRole = sign < 0 ? 'flankLeft' : 'flankRight';
+            wolf.packOffsetBase = base;
+            const jitter = wolf.packOffsetJitter ?? 0;
+            wolf.packOffset = sign * (base + jitter);
+          });
+        };
+
+        applyFlank(left, -1);
+        applyFlank(right, 1);
+
+        for (const wolf of wolves) {
+          if (wolf === leader) continue;
+          if (wolf.packRole !== 'flankLeft' && wolf.packRole !== 'flankRight') {
+            const sign = wolf.x <= playerX ? -1 : 1;
+            if (wolf.packOffsetJitter == null) {
+              wolf.packOffsetJitter = (Math.random() - 0.5) * 0.4;
+            }
+            const base = 2;
+            wolf.packRole = sign < 0 ? 'flankLeft' : 'flankRight';
+            wolf.packOffsetBase = base;
+            wolf.packOffset = sign * (base + (wolf.packOffsetJitter ?? 0));
+          }
+        }
       }
 
       async function loadEnemySheet(e, name, url, fps, loop, computeBaseline) {
@@ -1878,7 +2337,7 @@
           onGround: true, anim: '', patrolMin: minX, patrolMax: maxX, dir: 1,
           gravity: -20, baselineUnits: 0, sizeUnits: 1,
           hpMax: 38, hp: 38, poiseThreshold: 25, poise: 25,
-          state: 'patrol', playerSeen: false, packRole: 'support',
+          state: 'patrol', playerSeen: false, packRole: 'support', packOffset: 0, packOffsetBase: 0, packOffsetJitter: 0, runBlockedFrames: 0,
           attackQueue: [], comboIndex: 0, currentAttack: null,
           attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
           nextComboAt: 0, leapState: null, hitReactUntil: 0,
@@ -1923,8 +2382,19 @@
           staggerDurationMs: 620,
           poiseResetDelayMs: 1600,
           poiseRegenPerSec: 18,
+          poiseRegenDurationMs: 1800,
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
+          getAnimationState: () => {
+            const anim = e.anim;
+            const sprite = e.sprite;
+            const meta = e.mgr?.[anim];
+            const frameCount = meta?.frames ?? (sprite ? sprite.cellIndex + 1 : 0);
+            const frameIndex = sprite ? Math.floor(sprite.cellIndex ?? 0) : 0;
+            return { name: anim, frameIndex, frameCount };
+          },
+          getSocketPosition: ({ socket, animation, frameIndex, facing }) =>
+            getWolfSocketPositionFor(e, { socket, animation, frameIndex, facing }),
           onHealthChange: (hp) => { e.hp = hp; },
           onPoiseChange: (poise) => { e.poise = poise; },
           onDamage: (event) => {
@@ -2010,6 +2480,7 @@
           height: e.sizeUnits * 0.5,
           offset: { x: 0, y: -e.sizeUnits * 0.02 }
         });
+        e.id = actorId;
         e.combat = combatActor;
         e.hurtbox = hb;
         enemies.push(e);
@@ -2078,6 +2549,7 @@
           staggerDurationMs: 520,
           poiseResetDelayMs: 1400,
           poiseRegenPerSec: 14,
+          poiseRegenDurationMs: 800,
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
@@ -2198,12 +2670,18 @@
           }
           case 'stalk': {
             if (dying) { e.vx *= 0.9; break; }
-            if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
             const targetX = computeWolfTargetX(e, playerX);
             const diff = targetX - e.x;
             const speed = absDx > 4 ? 3.3 : 2.9;
+            const inTriggerRange = absDx <= 1.4;
+            if (!inTriggerRange) {
+              if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
+            } else if (e.mgr.ready && e.anim !== 'ready') {
+              setEnemyAnim(e, 'ready');
+            }
             if (Math.abs(diff) > 0.1) {
-              e.vx = Math.sign(diff) * speed;
+              const moveSpeed = inTriggerRange ? Math.min(speed, 1.2) : speed;
+              e.vx = Math.sign(diff) * moveSpeed;
             } else {
               e.vx = 0;
             }
@@ -2219,6 +2697,14 @@
                   startWolfReady(e, readyDelay);
                 }
               }
+            }
+            if (inTriggerRange && (e.attackQueue.length === 0 || now < e.nextComboAt)) {
+              e.runBlockedFrames = (e.runBlockedFrames || 0) + 1;
+              if (e.runBlockedFrames === 2) {
+                console.debug('[WolfFSM] run→attack delay', e.id);
+              }
+            } else {
+              e.runBlockedFrames = 0;
             }
             break;
           }
@@ -2266,19 +2752,53 @@
             break;
           }
           case 'leap': {
-            e.facing = dx >= 0 ? 1 : -1;
             const leap = e.leapState;
             if (!leap) {
               if (!dying && !e.pendingLandingState) finishWolfAttack(e);
-            } else {
-              if (e.vy > 0.3 && e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
-              else if (e.vy < -0.3 && e.mgr.jumpDown) setEnemyAnim(e, 'jumpDown');
-              else if (e.mgr.jumpMid) setEnemyAnim(e, 'jumpMid');
-              if (!dying && !e.pendingLandingState && now >= leap.endBy) {
-                finishWolfAttack(e, { def: leap.def });
-              } else if ((dying || e.pendingLandingState) && now >= leap.endBy) {
-                e.leapState = null;
+              break;
+            }
+            const totalSec = leap.duration ?? ((leap.endBy - leap.start) / 1000);
+            const elapsedSec = Math.min(totalSec, Math.max(0, (now - leap.start) / 1000));
+            const t = totalSec > 0 ? Math.min(1, elapsedSec / totalSec) : 1;
+            const desiredX = computeWolfTargetX(e, playerX);
+            if (Number.isFinite(desiredX)) {
+              const maxAdjustPerSec = leap.maxAirAdjust ?? 4;
+              const maxDelta = maxAdjustPerSec * Math.max(0.016, dt || 0);
+              if (!Number.isFinite(leap.targetX)) leap.targetX = desiredX;
+              const delta = desiredX - leap.targetX;
+              if (Math.abs(delta) > maxDelta) {
+                leap.targetX += Math.sign(delta) * maxDelta;
+              } else {
+                leap.targetX = desiredX;
               }
+            }
+            const targetX = Number.isFinite(leap.targetX) ? leap.targetX : leap.startX;
+            const nextX = leap.startX + (targetX - leap.startX) * t;
+            const ay = leap.gravity ?? -26;
+            const vy0 = leap.vy ?? 0;
+            const nextY = leap.startY + vy0 * elapsedSec + 0.5 * ay * elapsedSec * elapsedSec;
+            const velocityY = vy0 + ay * elapsedSec;
+            const prevX = e.x;
+            e.x = nextX;
+            const groundY = leap.targetY ?? centerFromFoot(e, 0);
+            const clampedY = nextY < groundY ? groundY : nextY;
+            e.y = clampedY;
+            e.vx = (e.x - prevX) / Math.max(dt, 0.001);
+            e.vy = velocityY;
+            e.facing = e.vx >= 0 ? 1 : -1;
+            e.onGround = false;
+            if (velocityY > 0.3 && e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
+            else if (velocityY < -0.3 && e.mgr.jumpDown) setEnemyAnim(e, 'jumpDown');
+            else if (e.mgr.jumpMid) setEnemyAnim(e, 'jumpMid');
+            const allowLand = elapsedSec >= (leap.minAirTime ?? 0);
+            if (!dying && !e.pendingLandingState && allowLand && (t >= 1 || nextY <= groundY + 0.01)) {
+              e.y = groundY;
+              e.onGround = true;
+              e.leapState = null;
+              leap.landedAt = now;
+              finishWolfAttack(e, { def: leap.def });
+            } else if ((dying || e.pendingLandingState) && now >= leap.endBy) {
+              e.leapState = null;
             }
             break;
           }
@@ -2381,6 +2901,53 @@
         const bottom = camera.position.y + (camera.orthoBottom ?? -ORTHO_VIEW_HEIGHT * 0.5);
         return { left, right, top, bottom };
       }
+
+      function resizeHitboxDebugCanvas() {
+        if (!hitboxDebugCanvas) return;
+        const width = engine.getRenderWidth();
+        const height = engine.getRenderHeight();
+        if (hitboxDebugCanvas.width !== width || hitboxDebugCanvas.height !== height) {
+          hitboxDebugCanvas.width = width;
+          hitboxDebugCanvas.height = height;
+          hitboxDebugCanvas.style.width = width + 'px';
+          hitboxDebugCanvas.style.height = height + 'px';
+        }
+      }
+
+      function drawHitboxDebug(shapes) {
+        if (!hitboxDebugCanvas || !hitboxDebugCtx) return;
+        resizeHitboxDebugCanvas();
+        const ctx = hitboxDebugCtx;
+        ctx.clearRect(0, 0, hitboxDebugCanvas.width, hitboxDebugCanvas.height);
+        if (!shapes || shapes.length === 0) return;
+        const view = getCameraViewBounds();
+        const worldWidth = view.right - view.left;
+        const worldHeight = view.top - view.bottom;
+        if (worldWidth <= 0 || worldHeight <= 0) return;
+        for (const shape of shapes) {
+          if (!shape) continue;
+          const color = shape.team === 'player' ? 'rgba(80, 220, 255, 0.75)' : 'rgba(255, 160, 0, 0.75)';
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          if (shape.type === 'rect') {
+            const cx = ((shape.center.x - view.left) / worldWidth) * hitboxDebugCanvas.width;
+            const cy = ((view.top - shape.center.y) / worldHeight) * hitboxDebugCanvas.height;
+            const w = (shape.width / worldWidth) * hitboxDebugCanvas.width;
+            const h = (shape.height / worldHeight) * hitboxDebugCanvas.height;
+            ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+          } else if (shape.type === 'circle') {
+            const cx = ((shape.center.x - view.left) / worldWidth) * hitboxDebugCanvas.width;
+            const cy = ((view.top - shape.center.y) / worldHeight) * hitboxDebugCanvas.height;
+            const r = (shape.radius / worldWidth) * hitboxDebugCanvas.width;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+      }
+
+      Combat.setDebugCallback(drawHitboxDebug);
+      resizeHitboxDebugCanvas();
 
       function batShouldPreserveAnchor(state) {
         return state === 'fly' || state === 'attack' || state === 'rebound' || state === 'stagger' || state === 'hit';
@@ -3368,7 +3935,7 @@
       scene.render();
     });
 
-    window.addEventListener('resize', () => { engine.resize(); fitOrtho(); });
+    window.addEventListener('resize', () => { engine.resize(); fitOrtho(); resizeHitboxDebugCanvas(); });
 
     if (typeof window !== 'undefined') window.EotRCombat = Combat;
 
