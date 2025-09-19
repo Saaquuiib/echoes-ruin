@@ -20,7 +20,10 @@
 
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
-  
+
+  const ENEMY_FADE_DELAY_MS = 5000;
+  const ENEMY_FADE_DURATION_MS = 1000;
+
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
@@ -85,6 +88,452 @@
       return FALLBACK_BASELINE_PX;
     }
   }
+
+  const Combat = (() => {
+    let actorSeq = 1;
+    let hurtSeq = 1;
+    let hitSeq = 1;
+    const actors = new Map();
+    const hurtboxes = new Map();
+    const hitboxes = [];
+
+    function resolveActor(ref) {
+      if (!ref) return null;
+      if (typeof ref === 'string') return actors.get(ref) || null;
+      if (typeof ref === 'object' && ref.id && actors.has(ref.id)) return ref;
+      return null;
+    }
+
+    function resolveHurtbox(ref) {
+      if (!ref) return null;
+      if (typeof ref === 'string') return hurtboxes.get(ref) || null;
+      if (typeof ref === 'object' && ref.id && hurtboxes.has(ref.id)) return ref;
+      return null;
+    }
+
+    function registerActor(config = {}) {
+      const id = config.id || `actor_${actorSeq++}`;
+      if (actors.has(id)) throw new Error(`Combat actor id "${id}" already exists.`);
+      const basePoise = config.poiseMax ?? config.poiseThreshold ?? config.maxPoise ?? 0;
+      const initialPoise = config.initialPoise ?? (basePoise > 0 ? basePoise : 0);
+      const actor = {
+        id,
+        team: config.team || 'neutral',
+        hpMax: config.hpMax ?? config.maxHp ?? config.hp ?? 0,
+        hp: config.hp ?? config.hpMax ?? config.maxHp ?? 0,
+        getOrigin: config.getPosition || config.getOrigin || (() => ({ x: 0, y: 0 })),
+        getFacing: config.getFacing || (() => 1),
+        poiseThreshold: basePoise,
+        poiseMax: basePoise,
+        poise: Math.max(0, Math.min(initialPoise, basePoise || initialPoise)),
+        poiseResetDelayMs: config.poiseResetDelayMs ?? 1200,
+        poiseRegenPerSec: config.poiseRegenPerSec ?? 0,
+        staggerDurationMs: config.staggerDurationMs ?? 600,
+        staggeredUntil: 0,
+        lastPoiseDamageAt: 0,
+        invulnFlags: new Map(),
+        hurtboxes: new Map(),
+        alive: true,
+        processHit: config.processHit || null,
+        onPreHit: config.onPreHit || null,
+        onPostHit: config.onPostHit || null,
+        onDamage: config.onDamage || null,
+        onHealthChange: config.onHealthChange || null,
+        onDeath: config.onDeath || null,
+        onPoiseChange: config.onPoiseChange || null,
+        onStagger: config.onStagger || null,
+        onStaggerEnd: config.onStaggerEnd || null,
+        data: config.data || {},
+        meta: config.meta || {}
+      };
+      actor.hpMax = actor.hpMax || actor.hp;
+      actor.hp = Math.min(actor.hpMax, actor.hp);
+      actors.set(id, actor);
+      return actor;
+    }
+
+    function removeActor(ref) {
+      const actor = resolveActor(ref);
+      if (!actor) return;
+      for (const hb of actor.hurtboxes.values()) {
+        hurtboxes.delete(hb.id);
+      }
+      actor.hurtboxes.clear();
+      actors.delete(actor.id);
+      hitboxes.forEach(hb => {
+        if (hb.actor === actor) hb.markRemove = true;
+      });
+    }
+
+    function registerHurtbox(actorRef, config = {}) {
+      const actor = resolveActor(actorRef);
+      if (!actor) throw new Error('Combat.registerHurtbox: actor not found.');
+      const id = config.id || `hurt_${hurtSeq++}`;
+      const hurtbox = {
+        id,
+        actor,
+        shape: config.shape || 'rect',
+        width: config.width ?? config.size?.width ?? 0,
+        height: config.height ?? config.size?.height ?? 0,
+        radius: config.radius ?? config.size?.radius ?? 0,
+        offset: { x: config.offset?.x ?? 0, y: config.offset?.y ?? 0 },
+        mirror: config.mirror !== false,
+        getOrigin: config.getOrigin || null,
+        getFacing: config.getFacing || null,
+        enabled: config.enabled !== undefined ? !!config.enabled : true,
+        isEnabled: typeof config.isEnabled === 'function' ? config.isEnabled : null,
+        absolute: !!config.absolute,
+        tags: config.tags || null
+      };
+      actor.hurtboxes.set(id, hurtbox);
+      hurtboxes.set(id, hurtbox);
+      return hurtbox;
+    }
+
+    function updateHurtbox(ref, patch = {}) {
+      const hurtbox = resolveHurtbox(ref);
+      if (!hurtbox) return null;
+      if (patch.shape) hurtbox.shape = patch.shape;
+      if (patch.width != null) hurtbox.width = patch.width;
+      if (patch.height != null) hurtbox.height = patch.height;
+      if (patch.radius != null) hurtbox.radius = patch.radius;
+      if (patch.offset) {
+        if (patch.offset.x != null) hurtbox.offset.x = patch.offset.x;
+        if (patch.offset.y != null) hurtbox.offset.y = patch.offset.y;
+      }
+      if (patch.enabled !== undefined) hurtbox.enabled = !!patch.enabled;
+      if (patch.getOrigin) hurtbox.getOrigin = patch.getOrigin;
+      if (patch.getFacing) hurtbox.getFacing = patch.getFacing;
+      if (patch.mirror !== undefined) hurtbox.mirror = !!patch.mirror;
+      if (patch.absolute !== undefined) hurtbox.absolute = !!patch.absolute;
+      return hurtbox;
+    }
+
+    function setHurtboxEnabled(ref, enabled) {
+      const hurtbox = resolveHurtbox(ref);
+      if (!hurtbox) return;
+      hurtbox.enabled = !!enabled;
+    }
+
+    function removeHurtbox(ref) {
+      const hurtbox = resolveHurtbox(ref);
+      if (!hurtbox) return;
+      hurtbox.actor?.hurtboxes?.delete(hurtbox.id);
+      hurtboxes.delete(hurtbox.id);
+    }
+
+    function spawnHitbox(actorRef, config = {}) {
+      const actor = resolveActor(actorRef);
+      if (!actor) throw new Error('Combat.spawnHitbox: actor not found.');
+      const id = config.id || `hit_${hitSeq++}`;
+      const now = performance.now();
+      const delay = Math.max(0, config.delayMs || 0);
+      const duration = Math.max(0, config.durationMs != null ? config.durationMs : 0);
+      const hitbox = {
+        id,
+        actor,
+        team: config.team || actor.team,
+        shape: config.shape || 'rect',
+        width: config.width ?? config.size?.width ?? 0,
+        height: config.height ?? config.size?.height ?? 0,
+        radius: config.radius ?? config.size?.radius ?? 0,
+        offset: { x: config.offset?.x ?? 0, y: config.offset?.y ?? 0 },
+        mirror: config.mirror !== false,
+        getOrigin: config.getOrigin || null,
+        getFacing: config.getFacing || null,
+        absolute: !!config.absolute,
+        damage: config.damage ?? 0,
+        poise: config.poise ?? config.stagger ?? 0,
+        pierce: !!config.pierce,
+        friendlyFire: !!config.friendlyFire,
+        ignoreInvuln: !!config.ignoreInvuln,
+        applyDamage: config.applyDamage !== undefined ? !!config.applyDamage : true,
+        applyPoise: config.applyPoise !== undefined ? !!config.applyPoise : true,
+        activateAt: now + delay,
+        expiresAt: now + delay + duration,
+        durationMs: duration,
+        meta: config.meta || null,
+        onHit: config.onHit || null,
+        onExpire: config.onExpire || null,
+        alreadyHit: new Set(),
+        hitCount: 0,
+        didHit: false,
+        markRemove: false
+      };
+      hitboxes.push(hitbox);
+      return hitbox;
+    }
+
+    function computeShape(box) {
+      const actor = box.actor || null;
+      const originFn = box.getOrigin || actor?.getOrigin;
+      const facingFn = box.getFacing || actor?.getFacing;
+      const origin = originFn ? originFn(actor) : { x: 0, y: 0 };
+      const facing = box.mirror === false ? 1 : (facingFn ? facingFn(actor) : 1);
+      const offsetX = (box.offset?.x || 0) * (box.absolute ? 1 : facing);
+      const offsetY = box.offset?.y || 0;
+      const center = { x: origin.x + offsetX, y: origin.y + offsetY };
+      if (box.shape === 'circle') {
+        const radius = Math.max(0, box.radius || 0);
+        return { type: 'circle', center, radius };
+      }
+      const width = Math.max(0, box.width || 0);
+      const height = Math.max(0, box.height || 0);
+      return {
+        type: 'rect',
+        center,
+        width,
+        height,
+        minX: center.x - width * 0.5,
+        maxX: center.x + width * 0.5,
+        minY: center.y - height * 0.5,
+        maxY: center.y + height * 0.5
+      };
+    }
+
+    function rectsOverlap(a, b) {
+      return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+    }
+
+    function circlesOverlap(a, b) {
+      const dx = a.center.x - b.center.x;
+      const dy = a.center.y - b.center.y;
+      const r = a.radius + b.radius;
+      return (dx * dx + dy * dy) <= r * r;
+    }
+
+    function rectCircleOverlap(rect, circle) {
+      const clampedX = Math.max(rect.minX, Math.min(circle.center.x, rect.maxX));
+      const clampedY = Math.max(rect.minY, Math.min(circle.center.y, rect.maxY));
+      const dx = circle.center.x - clampedX;
+      const dy = circle.center.y - clampedY;
+      return (dx * dx + dy * dy) <= circle.radius * circle.radius;
+    }
+
+    function shapesOverlap(a, b) {
+      if (!a || !b) return false;
+      if (a.type === 'rect' && b.type === 'rect') return rectsOverlap(a, b);
+      if (a.type === 'circle' && b.type === 'circle') return circlesOverlap(a, b);
+      if (a.type === 'rect' && b.type === 'circle') return rectCircleOverlap(a, b);
+      if (a.type === 'circle' && b.type === 'rect') return rectCircleOverlap(b, a);
+      return false;
+    }
+
+    function actorInvulnerable(actor, now) {
+      if (!actor || actor.invulnFlags.size === 0) return false;
+      let invuln = false;
+      for (const [tag, until] of actor.invulnFlags) {
+        if (until === Infinity) {
+          invuln = true;
+          continue;
+        }
+        if (now >= until) {
+          actor.invulnFlags.delete(tag);
+        } else {
+          invuln = true;
+        }
+      }
+      return invuln;
+    }
+
+    function applyDamage(actor, event) {
+      const amount = Math.max(0, event.damage || 0);
+      if (amount <= 0 || !actor.alive) return false;
+      const prev = actor.hp;
+      const next = Math.max(0, prev - amount);
+      if (next === prev) return false;
+      actor.hp = next;
+      if (actor.onHealthChange) actor.onHealthChange(actor.hp, event);
+      if (actor.onDamage) actor.onDamage(event);
+      if (actor.hp <= 0 && actor.alive) {
+        actor.alive = false;
+        if (actor.onDeath) actor.onDeath(event);
+      }
+      return true;
+    }
+
+    function applyPoise(actor, event, now) {
+      const amount = Math.max(0, event.poise || 0);
+      if (amount <= 0 || actor.poiseMax <= 0 || !actor.alive) return false;
+      const prev = actor.poise;
+      actor.poise = Math.max(0, prev - amount);
+      actor.lastPoiseDamageAt = now;
+      let broke = false;
+      if (actor.poise <= 0 && actor.poiseMax > 0 && actor.staggeredUntil <= now) {
+        actor.staggeredUntil = now + actor.staggerDurationMs;
+        broke = true;
+        event.staggered = true;
+        if (actor.onStagger) actor.onStagger(event);
+      }
+      if (actor.onPoiseChange) actor.onPoiseChange(actor.poise, event);
+      return broke || actor.poise !== prev;
+    }
+
+    function setInvulnerable(actorRef, tag = 'default', enabled = true, durationMs = 0) {
+      const actor = resolveActor(actorRef);
+      if (!actor) return;
+      const key = tag || 'default';
+      if (enabled) {
+        const until = durationMs > 0 ? performance.now() + durationMs : Infinity;
+        actor.invulnFlags.set(key, until);
+      } else {
+        actor.invulnFlags.delete(key);
+      }
+    }
+
+    function clearInvulnerability(actorRef, tag) {
+      const actor = resolveActor(actorRef);
+      if (!actor) return;
+      if (tag) actor.invulnFlags.delete(tag); else actor.invulnFlags.clear();
+    }
+
+    function isInvulnerable(actorRef, now = performance.now()) {
+      const actor = resolveActor(actorRef);
+      if (!actor) return false;
+      return actorInvulnerable(actor, now);
+    }
+
+    function update(dt, now = performance.now()) {
+      const activeActors = Array.from(actors.values());
+      for (const actor of activeActors) {
+        actorInvulnerable(actor, now);
+        if (!actor.alive) continue;
+        if (actor.staggeredUntil > 0 && now >= actor.staggeredUntil) {
+          actor.staggeredUntil = 0;
+          if (actor.poiseMax > 0 && actor.poise < actor.poiseMax) {
+            const prev = actor.poise;
+            actor.poise = actor.poiseMax;
+            actor.lastPoiseDamageAt = now;
+            if (actor.poise !== prev && actor.onPoiseChange) {
+              actor.onPoiseChange(actor.poise, { actor, now, refill: true });
+            }
+          }
+          if (actor.onStaggerEnd) actor.onStaggerEnd({ actor, now });
+        }
+        if (actor.poiseMax > 0 && actor.poise < actor.poiseMax && actor.staggeredUntil <= 0) {
+          const elapsed = now - actor.lastPoiseDamageAt;
+          if (actor.poiseResetDelayMs <= 0 || elapsed >= actor.poiseResetDelayMs) {
+            const prev = actor.poise;
+            if (actor.poiseRegenPerSec > 0) {
+              actor.poise = Math.min(actor.poiseMax, actor.poise + actor.poiseRegenPerSec * dt);
+            } else {
+              actor.poise = actor.poiseMax;
+            }
+            if (actor.poise !== prev && actor.onPoiseChange) {
+              actor.onPoiseChange(actor.poise, { actor, now, regen: true });
+            }
+          }
+        }
+      }
+
+      const hurtList = Array.from(hurtboxes.values());
+      for (const hitbox of hitboxes) {
+        if (hitbox.markRemove || !hitbox.actor.alive) {
+          hitbox.markRemove = true;
+          continue;
+        }
+        if (now < hitbox.activateAt) continue;
+        const expired = now > hitbox.expiresAt;
+        const hitShape = computeShape(hitbox);
+        if (!hitShape) continue;
+        for (const hurtbox of hurtList) {
+          if (hurtbox.actor === hitbox.actor) continue;
+          if (!hurtbox.actor.alive) continue;
+          if (!hitbox.friendlyFire && hurtbox.actor.team === hitbox.team) continue;
+          const enabled = hurtbox.isEnabled ? !!hurtbox.isEnabled() : hurtbox.enabled;
+          if (!enabled) continue;
+          if (hitbox.alreadyHit.has(hurtbox.id)) continue;
+          if (!hitbox.ignoreInvuln && actorInvulnerable(hurtbox.actor, now)) continue;
+          const hurtShape = computeShape(hurtbox);
+          if (!hurtShape || !shapesOverlap(hitShape, hurtShape)) continue;
+
+          const event = {
+            now,
+            source: hitbox.actor,
+            target: hurtbox.actor,
+            hitbox,
+            hurtbox,
+            firstHit: hitbox.hitCount === 0,
+            applyDamage: hitbox.applyDamage,
+            applyPoise: hitbox.applyPoise,
+            handled: false,
+            cancelled: false,
+            meta: hitbox.meta || null,
+            damage: 0,
+            poise: 0,
+            damageApplied: false,
+            poiseApplied: false
+          };
+          event.damage = typeof hitbox.damage === 'function' ? hitbox.damage(event) : (hitbox.damage || 0);
+          event.poise = typeof hitbox.poise === 'function' ? hitbox.poise(event) : (hitbox.poise || 0);
+
+          if (hurtbox.actor.processHit) {
+            hurtbox.actor.processHit(event);
+          }
+          if (hurtbox.actor.onPreHit) {
+            hurtbox.actor.onPreHit(event);
+          }
+          if (event.cancelled) {
+            hitbox.alreadyHit.add(hurtbox.id);
+            hitbox.hitCount++;
+            continue;
+          }
+
+          if (!event.handled) {
+            if (event.applyDamage) {
+              event.damageApplied = applyDamage(hurtbox.actor, event) || event.damageApplied;
+            }
+            if (event.applyPoise) {
+              event.poiseApplied = applyPoise(hurtbox.actor, event, now) || event.poiseApplied;
+            }
+          }
+
+          event.hitLanded = event.damageApplied || event.poiseApplied || event.handled;
+          if (hurtbox.actor.onPostHit) hurtbox.actor.onPostHit(event);
+          if (hitbox.onHit && event.hitLanded) hitbox.onHit(event);
+
+          hitbox.alreadyHit.add(hurtbox.id);
+          hitbox.hitCount++;
+          if (event.hitLanded) hitbox.didHit = true;
+          if (!hitbox.pierce) {
+            hitbox.markRemove = true;
+            break;
+          }
+        }
+        if (expired) hitbox.markRemove = true;
+      }
+
+      if (hitboxes.length > 0) {
+        const survivors = [];
+        for (const hitbox of hitboxes) {
+          if (hitbox.markRemove || now > hitbox.expiresAt) {
+            if (hitbox.onExpire) {
+              hitbox.onExpire({ now, hitbox, didHit: !!hitbox.didHit });
+            }
+            continue;
+          }
+          survivors.push(hitbox);
+        }
+        hitboxes.length = 0;
+        hitboxes.push(...survivors);
+      }
+    }
+
+    return {
+      registerActor,
+      removeActor,
+      registerHurtbox,
+      updateHurtbox,
+      setHurtboxEnabled,
+      removeHurtbox,
+      spawnHitbox,
+      setInvulnerable,
+      clearInvulnerability,
+      isInvulnerable,
+      update,
+      actors
+    };
+  })();
 
   try {
     // --- Babylon boot ---
@@ -165,6 +614,9 @@
       ladders.push({ x, y0, y1, width, mesh });
       return ladders[ladders.length - 1];
     }
+
+    let playerActor = null;
+    let playerHurtbox = null;
     async function spawnShrine(x, y) {
       const mesh = BABYLON.MeshBuilder.CreateCylinder('shrine', { height: 1.5, diameter: 0.5 }, scene);
       mesh.position.set(x, y + 0.75, 0);
@@ -313,6 +765,8 @@
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
+      lightDamage: 12, lightStagger: 0.32,
+      lightFinisherDamage: 16, lightFinisherStagger: 0.45,
       heavyDamage: 30, heavyStagger: 0.6,
       heavyChargeBonusDamage: 12, heavyChargeBonusStagger: 0.2,
       flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
@@ -337,6 +791,37 @@
       landingTriggeredAt: 0
     };
 
+    playerActor = Combat.registerActor({
+      id: 'player',
+      team: 'player',
+      hpMax: stats.hpMax,
+      hp: stats.hp,
+      getPosition: () => ({ x: placeholder.position.x, y: placeholder.position.y }),
+      getFacing: () => state.facing,
+      processHit: (event) => {
+        if (state.dead) { event.cancelled = true; return; }
+        if (state.blocking) {
+          event.applyDamage = false;
+          event.applyPoise = false;
+          event.handled = true;
+          event.blocked = true;
+        }
+      },
+      onHealthChange: (hp) => { setHP(hp); },
+      onDamage: (event) => { triggerHurt(event.damage, { alreadyApplied: true, event }); },
+      onDeath: () => { if (!state.dead) die(); }
+    });
+    playerActor.hpMax = stats.hpMax;
+    playerActor.hp = stats.hp;
+
+    playerHurtbox = Combat.registerHurtbox(playerActor, {
+      id: 'player_body',
+      shape: 'rect',
+      width: 0.7,
+      height: 1.7,
+      offset: { x: 0, y: 0 }
+    });
+
     // === HUD refs ===
     const hpFill = document.querySelector('#hp .fill');
     const stFill = document.querySelector('#stamina .fill');
@@ -347,7 +832,15 @@
     let healScreenTimer = null;
     function showPrompt(msg) { promptEl.textContent = msg; promptEl.style.display = 'block'; }
     function hidePrompt() { promptEl.style.display = 'none'; }
-    function setHP(v) { stats.hp = Math.max(0, Math.min(stats.hpMax, v)); hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%'; }
+    function setHP(v) {
+      const clamped = Math.max(0, Math.min(stats.hpMax, v));
+      stats.hp = clamped;
+      hpFill.style.width = (stats.hp / stats.hpMax * 100) + '%';
+      if (playerActor) {
+        playerActor.hpMax = stats.hpMax;
+        playerActor.hp = clamped;
+      }
+    }
     function setST(v) { stats.stam = Math.max(0, Math.min(stats.stamMax, v)); stFill.style.width = (stats.stam / stats.stamMax * 100) + '%'; }
     function setFlasks(n) { stats.flaskCount = Math.max(0, Math.min(stats.flaskMax, n)); flaskPips.forEach((p, i) => p.classList.toggle('used', i >= stats.flaskCount)); }
     setHP(stats.hp); setST(stats.stam); setFlasks(stats.flaskCount);
@@ -411,7 +904,7 @@
     };
 
     // Attack/Action timing
-    const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false };
+    const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false, pendingHit: false, hitAt: 0, hitMeta: null };
     const heavy = {
       charging: false,
       releasing: false,
@@ -431,6 +924,60 @@
       lastHoldMs: 0,
       lastDamage: 0,
       lastStagger: 0
+    };
+    const PLAYER_ATTACKS = {
+      light1: {
+        shape: 'rect',
+        width: 1.05,
+        height: 1.2,
+        offset: { x: 0.85, y: 0 },
+        damage: () => stats.lightDamage,
+        poise: () => stats.lightStagger,
+        durationMs: 110,
+        hitFrac: 0.42,
+        hitstopMs: HITSTOP_LIGHT_MS,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.72,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      light2: {
+        shape: 'rect',
+        width: 1.1,
+        height: 1.2,
+        offset: { x: 0.9, y: 0 },
+        damage: () => stats.lightDamage,
+        poise: () => stats.lightStagger,
+        durationMs: 110,
+        hitFrac: 0.42,
+        hitstopMs: HITSTOP_LIGHT_MS,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.75,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      light3: {
+        shape: 'rect',
+        width: 1.25,
+        height: 1.25,
+        offset: { x: 1.0, y: 0 },
+        damage: () => stats.lightFinisherDamage ?? stats.lightDamage,
+        poise: () => stats.lightFinisherStagger ?? stats.lightStagger,
+        durationMs: 120,
+        hitFrac: 0.48,
+        hitstopMs: HITSTOP_LIGHT_MS + 10,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.85,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      heavy: {
+        shape: 'rect',
+        width: 1.5,
+        height: 1.3,
+        offset: { x: 1.1, y: 0 },
+        damage: () => heavy.releaseDamage,
+        poise: () => heavy.releaseStagger,
+        durationMs: 140,
+        hitFrac: HEAVY_HIT_FRAC,
+        hitstopMs: () => HITSTOP_HEAVY_MS + (heavy.charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0),
+        shakeMagnitude: () => CAMERA_SHAKE_MAG * (heavy.charged ? 1.4 : 1.0),
+        shakeDurationMs: () => CAMERA_SHAKE_DURATION_MS * (heavy.charged ? 1.2 : 1)
+      }
     };
     const timeline = {
       hitstopUntil: 0,
@@ -609,20 +1156,61 @@
     }
 
     function onPlayerAttackLand(meta = {}) {
-      const kind = meta.type || 'light';
-      const charged = !!meta.charged;
-      let hitstopMs = meta.hitstopMs;
-      let shakeMag = meta.shakeMagnitude;
-      if (hitstopMs == null) {
-        hitstopMs = (kind === 'heavy')
-          ? HITSTOP_HEAVY_MS + (charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0)
-          : HITSTOP_LIGHT_MS;
-      }
-      if (shakeMag == null) {
-        const base = kind === 'heavy' ? CAMERA_SHAKE_MAG : CAMERA_SHAKE_MAG * 0.75;
-        shakeMag = charged ? base * 1.4 : base;
-      }
-      applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs: meta.shakeDurationMs });
+      if (!playerActor) return;
+      const inferredId = meta.attackId || (meta.stage ? `light${meta.stage}` : null) || meta.type || 'light1';
+      const attackDef = PLAYER_ATTACKS[inferredId] || PLAYER_ATTACKS.light1;
+      if (!attackDef) return;
+      const resolve = (value, fallbackMeta) => {
+        if (value == null) return fallbackMeta;
+        return value;
+      };
+      const damageVal = resolve(
+        meta.damage,
+        typeof attackDef.damage === 'function' ? attackDef.damage(meta) : attackDef.damage || 0
+      );
+      const poiseVal = resolve(
+        meta.stagger ?? meta.poise,
+        typeof attackDef.poise === 'function' ? attackDef.poise(meta) : attackDef.poise || 0
+      );
+      const durationMs = resolve(meta.durationMs, attackDef.durationMs ?? 0);
+      const offset = meta.offset || attackDef.offset || { x: 0, y: 0 };
+      const width = meta.width != null ? meta.width : attackDef.width ?? attackDef.size?.width ?? 0;
+      const height = meta.height != null ? meta.height : attackDef.height ?? attackDef.size?.height ?? 0;
+      const radius = meta.radius != null ? meta.radius : attackDef.radius ?? attackDef.size?.radius ?? 0;
+      const shape = meta.shape || attackDef.shape || (radius > 0 ? 'circle' : 'rect');
+      const pierce = meta.pierce != null ? meta.pierce : !!attackDef.pierce;
+      const friendlyFire = meta.friendlyFire != null ? meta.friendlyFire : !!attackDef.friendlyFire;
+      const hitstopMs = resolve(
+        meta.hitstopMs,
+        typeof attackDef.hitstopMs === 'function' ? attackDef.hitstopMs(meta) : attackDef.hitstopMs
+      );
+      const shakeMag = resolve(
+        meta.shakeMagnitude,
+        typeof attackDef.shakeMagnitude === 'function' ? attackDef.shakeMagnitude(meta) : attackDef.shakeMagnitude
+      );
+      const shakeDurationMs = resolve(
+        meta.shakeDurationMs,
+        typeof attackDef.shakeDurationMs === 'function' ? attackDef.shakeDurationMs(meta) : attackDef.shakeDurationMs
+      );
+
+      Combat.spawnHitbox(playerActor, {
+        shape,
+        width,
+        height,
+        radius,
+        offset,
+        durationMs,
+        damage: damageVal,
+        poise: poiseVal,
+        pierce,
+        friendlyFire,
+        meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
+        onHit: (event) => {
+          if (event.firstHit && event.hitLanded) {
+            applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs });
+          }
+        }
+      });
     }
 
     applyAnimationScale(1);
@@ -832,6 +1420,13 @@
       sp.position = new BABYLON.Vector3(placeholder.position.x, placeholder.position.y, 0);
       sp.playAnimation(0, SHEETS.idle.frames - 1, true, 1000 / SHEETS.idle.fps);
       playerSprite.sprite = sp;
+      if (playerHurtbox) {
+        Combat.updateHurtbox(playerHurtbox, {
+          width: playerSprite.sizeUnits * 0.55,
+          height: playerSprite.sizeUnits * 0.9,
+          offset: { x: 0, y: 0 }
+        });
+      }
 
       // Shadow scale
       shadow.scaling.x = playerSprite.sizeUnits * 0.6;
@@ -860,6 +1455,269 @@
         return footY + (e.sizeUnits * 0.5) - e.baselineUnits;
       }
 
+      function randChoice(list) {
+        if (!list || list.length === 0) return null;
+        return list[Math.floor(Math.random() * list.length)];
+      }
+
+      function updateEnemyFade(e, now) {
+        if (!e) return;
+        if (!e.deathAt || !e.sprite) return;
+        if (e.fadeDone) {
+          e.sprite.isVisible = false;
+          return;
+        }
+        const delay = e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS;
+        const duration = e.fadeDurationMs ?? ENEMY_FADE_DURATION_MS;
+        const start = e.fadeStartAt || (e.deathAt + delay);
+        if (!e.fadeStartAt) e.fadeStartAt = start;
+        if (now < start) return;
+        const progress = duration > 0 ? Math.min(1, Math.max(0, (now - start) / duration)) : 1;
+        const alpha = 1 - progress;
+        if (alpha <= 0.001) {
+          e.sprite.isVisible = false;
+          if (e.debugMesh) e.debugMesh.isVisible = false;
+          if (e.debugLabel) e.debugLabel.mesh.isVisible = false;
+          e.fadeDone = true;
+          return;
+        }
+        e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
+      }
+
+      const WOLF_COMBO_TABLE = {
+        close: [
+          ['bite'],
+          ['claw'],
+          ['bite', 'claw'],
+          ['bite', 'bite', 'claw']
+        ],
+        mid: [
+          ['bite'],
+          ['bite', 'claw'],
+          ['leap', 'bite'],
+          ['leap', 'bite', 'claw']
+        ],
+        far: [
+          ['leap', 'bite'],
+          ['leap', 'bite', 'claw'],
+          ['leap', 'bite', 'bite']
+        ]
+      };
+
+      const WOLF_ATTACK_DATA = {
+        bite: {
+          anim: 'bite',
+          hitFrac: 0.46,
+          durationMs: 190,
+          damage: 12,
+          poise: 14,
+          width: e => e.sizeUnits * 0.54,
+          height: e => e.sizeUnits * 0.42,
+          offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
+          maxRange: 1.05,
+          forwardImpulse: 2.2,
+          comboGapMs: 130,
+          recoveryMs: 340,
+          cooldownMs: 760
+        },
+        claw: {
+          anim: 'claw',
+          hitFrac: 0.5,
+          durationMs: 200,
+          damage: 15,
+          poise: 16,
+          width: e => e.sizeUnits * 0.6,
+          height: e => e.sizeUnits * 0.5,
+          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
+          maxRange: 1.25,
+          forwardImpulse: 2.6,
+          comboGapMs: 160,
+          recoveryMs: 420,
+          cooldownMs: 840
+        },
+        leap: {
+          type: 'maneuver',
+          jumpVel: 6.8,
+          forwardImpulse: 5,
+          maxDurationMs: 900,
+          minAirTime: 0.28,
+          landBufferMs: 140,
+          cooldownMs: 520
+        }
+      };
+
+      function computeWolfTargetX(e, playerX) {
+        if (!Number.isFinite(playerX)) playerX = 0;
+        const dx = playerX - e.x;
+        const sign = dx >= 0 ? 1 : -1;
+        let target;
+        if (e.packRole === 'flankLeft') target = playerX - 1.9;
+        else if (e.packRole === 'flankRight') target = playerX + 1.9;
+        else if (e.packRole === 'leader') target = playerX - sign * 1.05;
+        else target = playerX - sign * 2.2;
+        if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
+          target = Math.max(e.patrolMin, Math.min(e.patrolMax, target));
+        }
+        return target;
+      }
+
+      function chooseWolfCombo(e, distance) {
+        let bucket = 'far';
+        if (distance < 1.2) bucket = 'close';
+        else if (distance < 3.2) bucket = 'mid';
+        const allowLeap = distance >= 2.4;
+        const base = WOLF_COMBO_TABLE[bucket] || WOLF_COMBO_TABLE.close;
+        let pool = base
+          .filter(seq => seq && (allowLeap || !seq.includes('leap')))
+          .map(seq => seq.slice());
+        if (e.packRole === 'leader') {
+          pool.push(...WOLF_COMBO_TABLE.mid
+            .filter(seq => seq && seq.length > 1 && (allowLeap || !seq.includes('leap')))
+            .map(seq => seq.slice()));
+        } else if (e.packRole && e.packRole.startsWith('flank')) {
+          pool.push(['claw'], ['bite', 'claw']);
+        }
+        if (!allowLeap) {
+          pool = pool.filter(seq => seq && !seq.includes('leap'));
+        }
+        if (pool.length === 0) {
+          pool = WOLF_COMBO_TABLE.close
+            .filter(seq => seq && !seq.includes('leap'))
+            .map(seq => seq.slice());
+        }
+        if (distance > 1.8) {
+          const withLeap = pool.filter(seq => seq && seq.includes('leap'));
+          if (withLeap.length > 0) pool = withLeap.map(seq => seq.slice());
+        }
+        const choice = randChoice(pool);
+        return choice ? choice.slice() : [];
+      }
+
+      function startWolfReady(e, delayMs = 220) {
+        const now = performance.now();
+        e.state = 'ready';
+        e.readyUntil = now + delayMs;
+        e.vx = 0;
+        e.vy = 0;
+        if (e.mgr.ready) setEnemyAnim(e, 'ready');
+      }
+
+      function spawnWolfHitbox(e, def) {
+        if (!e.combat || !def || e.dying) return;
+        const width = typeof def.width === 'function' ? def.width(e) : def.width;
+        const height = typeof def.height === 'function' ? def.height(e) : def.height;
+        const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
+        Combat.spawnHitbox(e.combat, {
+          shape: 'rect',
+          width: width ?? 0,
+          height: height ?? 0,
+          offset,
+          durationMs: def.durationMs ?? 130,
+          damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
+          poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
+          getOrigin: () => ({ x: e.x, y: e.y }),
+          getFacing: () => e.facing,
+          meta: { enemy: 'wolf', attack: e.currentAttack?.name || 'unknown' }
+        });
+      }
+
+      function startWolfAttack(e, name) {
+        const def = WOLF_ATTACK_DATA[name];
+        const now = performance.now();
+        if (!def) return false;
+        if (def.type !== 'maneuver' && def.maxRange != null) {
+          const playerPos = playerSprite.sprite?.position;
+          const playerX = playerPos?.x;
+          if (playerX == null || Math.abs(playerX - e.x) > def.maxRange) {
+            e.state = 'stalk';
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = now;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            e.nextComboAt = Math.max(e.nextComboAt, now + 180);
+            return 'defer';
+          }
+        }
+        const attack = { name, def, start: now, spawned: false };
+        e.currentAttack = attack;
+        if (def.type === 'maneuver') {
+          e.state = 'leap';
+          e.leapState = {
+            def,
+            start: now,
+            endBy: now + (def.maxDurationMs ?? 800),
+            airborneAt: now,
+            landedAt: 0
+          };
+          e.vx = (def.forwardImpulse ?? 0) * e.facing;
+          e.vy = def.jumpVel ?? 0;
+          e.onGround = false;
+          if (e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
+        } else {
+          e.state = 'attack';
+          if (def.anim && e.mgr[def.anim]) {
+            setEnemyAnim(e, def.anim);
+          }
+          const animStart = e.animStart || now;
+          const animDur = e.animDur || 0;
+          attack.hitAt = animStart + animDur * (def.hitFrac ?? 0.5);
+          attack.endAt = animStart + animDur;
+          attack.gapMs = def.comboGapMs ?? 150;
+          attack.recoveryMs = def.recoveryMs ?? 360;
+          attack.cooldownMs = def.cooldownMs ?? 720;
+          e.attackHitAt = attack.hitAt;
+          e.attackEndAt = attack.endAt;
+          e.vx = def.forwardImpulse ? def.forwardImpulse * e.facing : 0;
+        }
+        return true;
+      }
+
+      function finishWolfAttack(e, { def = null } = {}) {
+        const now = performance.now();
+        const attack = e.currentAttack;
+        const attackDef = def || attack?.def || null;
+        e.vx = 0;
+        e.currentAttack = null;
+        e.attackHitAt = 0;
+        e.attackEndAt = 0;
+        e.leapState = null;
+        if (e.attackQueue && e.comboIndex < e.attackQueue.length - 1) {
+          e.comboIndex += 1;
+          const gap = attackDef ? (attackDef.comboGapMs ?? attackDef.landBufferMs ?? 150) : 150;
+          startWolfReady(e, gap);
+        } else {
+          e.attackQueue = [];
+          e.comboIndex = 0;
+          e.state = 'recover';
+          const recovery = attackDef ? (attackDef.recoveryMs ?? attackDef.landBufferMs ?? 380) : 380;
+          const cooldown = attackDef ? (attackDef.cooldownMs ?? 760) : 760;
+          e.stateUntil = now + recovery;
+          e.nextComboAt = now + cooldown;
+        }
+      }
+
+      function assignWolfPackRoles() {
+        const wolves = enemies.filter(en => en.type === 'wolf' && !en.dead && !en.dying);
+        if (wolves.length === 0) return;
+        const playerX = playerSprite.sprite?.position.x ?? 0;
+        let leader = null;
+        let best = Infinity;
+        for (const wolf of wolves) {
+          const dist = Math.abs(wolf.x - playerX);
+          if (dist < best) { leader = wolf; best = dist; }
+        }
+        wolves.forEach(w => { w.packRole = 'support'; });
+        if (leader) leader.packRole = 'leader';
+        const left = wolves.filter(w => w !== leader && w.x <= playerX)
+          .sort((a, b) => Math.abs(a.x - playerX) - Math.abs(b.x - playerX));
+        if (left.length > 0) left[0].packRole = 'flankLeft';
+        const right = wolves.filter(w => w !== leader && w.x > playerX)
+          .sort((a, b) => Math.abs(a.x - playerX) - Math.abs(b.x - playerX));
+        if (right.length > 0) right[0].packRole = 'flankRight';
+      }
+
       async function loadEnemySheet(e, name, url, fps, loop, computeBaseline) {
         const { ok, img, w: sheetW, h: sheetH } = await loadImage(url);
         if (!ok) return;
@@ -868,7 +1726,13 @@
         const frameH = sheetH;
         if (computeBaseline) {
           const baselinePx = await detectBaselinePx(img, sheetW, sheetH, frames, frameW, frameH);
-          e.baselineUnits = baselinePx / PPU;
+          const baselineUnits = baselinePx / PPU;
+          if (!e.baselines) e.baselines = {};
+          e.baselines[name] = baselineUnits;
+          if (!e._baselineInit) {
+            e.baselineUnits = baselineUnits;
+            e._baselineInit = true;
+          }
         }
         e.sizeUnits = frameH / PPU;
         const mgr = new BABYLON.SpriteManager(`${e.type}_${name}`, url, 1, { width: frameW, height: frameH }, scene);
@@ -883,11 +1747,29 @@
         if (!meta) return;
         if (e.anim === name && e.sprite) return;
         const pos = e.sprite ? e.sprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
+        const prevBaseline = e.baselineUnits;
+        const prevCenterY = pos.y;
+        const footY = prevBaseline != null ? (prevCenterY - (e.sizeUnits * 0.5) + prevBaseline) : null;
         if (e.sprite) e.sprite.dispose();
+        const nextBaseline = e.baselines?.[name];
+        const alignToFoot = e.alignToFoot !== false;
+        if (nextBaseline != null) {
+          e.baselineUnits = nextBaseline;
+          if (alignToFoot && footY != null) {
+            const newCenter = footY + (e.sizeUnits * 0.5) - e.baselineUnits;
+            e.y = newCenter;
+            pos.y = newCenter;
+          } else if (!alignToFoot) {
+            pos.y = e.y;
+          }
+        } else if (!alignToFoot) {
+          pos.y = e.y;
+        }
         const sp = new BABYLON.Sprite(`${e.type}_${name}`, meta.mgr);
         sp.size = e.sizeUnits;
         sp.position = pos;
         sp.invertU = (e.facing < 0);
+        sp.color = new BABYLON.Color4(1, 1, 1, 1);
         sp.playAnimation(0, meta.frames - 1, meta.loop, 1000 / meta.fps);
         e.sprite = sp;
         e.anim = name;
@@ -895,88 +1777,533 @@
         e.animDur = (meta.frames / meta.fps) * 1000;
       }
 
-      async function spawnWolf(x, footY, minX, maxX) {
-        const e = { type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
+      function getBatHorizontalBounds(e) {
+        const engage = e.engageRangeX;
+        let clampMin = Number.isFinite(e.patrolMin) ? e.patrolMin : (e.homeX - 3);
+        let clampMax = Number.isFinite(e.patrolMax) ? e.patrolMax : (e.homeX + 3);
+        if (Number.isFinite(engage)) {
+          const detectMin = e.homeX - engage;
+          const detectMax = e.homeX + engage;
+          clampMin = Math.min(clampMin, detectMin);
+          clampMax = Math.max(clampMax, detectMax);
+        }
+        if (!Number.isFinite(clampMin)) clampMin = e.homeX - 3;
+        if (!Number.isFinite(clampMax)) clampMax = e.homeX + 3;
+        if (clampMax < clampMin) {
+          const mid = e.homeX || 0;
+          clampMin = Math.min(clampMin, mid);
+          clampMax = Math.max(clampMax, mid);
+        }
+        return { min: clampMin, max: clampMax };
+      }
+
+      function clampBatX(e, value, bounds = getBatHorizontalBounds(e), usePad = true) {
+        const clampMin = bounds?.min;
+        const clampMax = bounds?.max;
+        if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+          if (clampMax <= clampMin) return clampMin;
+          if (!usePad) return Math.max(clampMin, Math.min(clampMax, value));
+          const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+          const innerMin = clampMin + edgePad;
+          const innerMax = clampMax - edgePad;
+          if (innerMax <= innerMin) {
+            return Math.max(clampMin, Math.min(clampMax, value));
+          }
+          return Math.max(innerMin, Math.min(innerMax, value));
+        }
+        return value;
+      }
+
+      // Bat dive mechanic removed; bats currently have no attack behavior.
+
+      function finalizeWolfDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.onGround = true;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        e.leapState = null;
+        e.attackQueue = [];
+        e.currentAttack = null;
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
+
+      function finalizeBatDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
+
+    async function spawnWolf(x, footY, minX, maxX) {
+        const e = {
+          type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
           onGround: true, anim: '', patrolMin: minX, patrolMax: maxX, dir: 1,
-          gravity: -20, jumpVel: 6, jumpCd: 1, baselineUnits: 0, sizeUnits: 1 };
+          gravity: -20, baselineUnits: 0, sizeUnits: 1,
+          hpMax: 38, hp: 38, poiseThreshold: 25, poise: 25,
+          state: 'patrol', playerSeen: false, packRole: 'support',
+          attackQueue: [], comboIndex: 0, currentAttack: null,
+          attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
+          nextComboAt: 0, leapState: null, hitReactUntil: 0,
+          staggered: false, staggerUntil: 0,
+          pendingLandingState: null,
+          dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
+          fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
+          dead: false, combat: null, hurtbox: null
+        };
         await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
+        await loadEnemySheet(e, 'ready', 'assets/sprites/wolf/Ready.png', 12, true);
+        await loadEnemySheet(e, 'bite', 'assets/sprites/wolf/Bite.png', 12, false, true);
+        await loadEnemySheet(e, 'claw', 'assets/sprites/wolf/Claw.png', 12, false, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/wolf/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/wolf/Dead.png', 12, false, true);
         await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
         await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
         await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
         e.y = centerFromFoot(e, footY);
+        e.nextComboAt = performance.now() + 600;
         setEnemyAnim(e, 'run');
         const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
         const mat = new BABYLON.StandardMaterial('dbgMatWolf', scene);
         mat.wireframe = true; mat.emissiveColor = new BABYLON.Color3(1, 0, 0);
         box.material = mat; box.isVisible = enemyDbg; box.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 128, height: 32 }, scene, false);
+        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 160, height: 48 }, scene, false);
         dt.hasAlpha = true;
         const lmat = new BABYLON.StandardMaterial('lblMatWolf', scene);
         lmat.diffuseTexture = dt; lmat.emissiveColor = new BABYLON.Color3(1, 1, 0); lmat.backFaceCulling = false;
         const plane = BABYLON.MeshBuilder.CreatePlane(`lbl_${e.type}`, { size: 1.5 }, scene);
         plane.material = lmat; plane.isVisible = enemyDbg; plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx: dt.getContext() };
+        const ctx = dt.getContext();
+        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx, w: 160, h: 48 };
+
+        const actorId = `wolf_${enemies.length}_${Date.now().toString(36)}`;
+        const combatActor = Combat.registerActor({
+          id: actorId,
+          team: 'enemy',
+          hpMax: e.hpMax,
+          hp: e.hpMax,
+          poiseThreshold: e.poiseThreshold,
+          staggerDurationMs: 620,
+          poiseResetDelayMs: 1600,
+          poiseRegenPerSec: 18,
+          getPosition: () => ({ x: e.x, y: e.y }),
+          getFacing: () => e.facing,
+          onHealthChange: (hp) => { e.hp = hp; },
+          onPoiseChange: (poise) => { e.poise = poise; },
+          onDamage: (event) => {
+            const now = performance.now();
+            e.lastHitAt = now;
+            if (e.dying || e.dead || event?.staggered) return;
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = 0;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'hit', until: now + 240 };
+              e.hitReactUntil = now + 240;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              return;
+            }
+            e.leapState = null;
+            e.vx = 0;
+            e.vy = 0;
+            e.state = 'hit';
+            e.hitReactUntil = now + 240;
+            e.stateUntil = e.hitReactUntil;
+            e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+            if (e.mgr.hit) setEnemyAnim(e, 'hit');
+          },
+          onStagger: () => {
+            const now = performance.now();
+            e.staggered = true;
+            e.staggerUntil = combatActor.staggeredUntil;
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = 0;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'stagger', until: combatActor.staggeredUntil };
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              return;
+            }
+            e.vx = 0; e.vy = 0;
+            e.state = 'stagger';
+            if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+          },
+          onStaggerEnd: ({ now }) => {
+            e.staggered = false;
+            e.staggerUntil = 0;
+            e.state = 'recover';
+            e.stateUntil = now + 320;
+            e.nextComboAt = Math.max(e.nextComboAt, now + 720);
+            if (e.mgr.ready) setEnemyAnim(e, 'ready');
+          },
+          onDeath: () => {
+            if (e.dead || e.dying) return;
+            const now = performance.now();
+            e.dying = true;
+            e.deathAt = now;
+            e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.currentAttack = null;
+            e.readyUntil = 0;
+            e.attackHitAt = 0;
+            e.attackEndAt = 0;
+            if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
+            Combat.removeActor(combatActor);
+            e.combat = null;
+            e.hurtbox = null;
+            if (e.state === 'leap' && !e.onGround) {
+              e.pendingLandingState = { type: 'dead' };
+            } else {
+              finalizeWolfDeath(e, now);
+            }
+          }
+        });
+        const hb = Combat.registerHurtbox(combatActor, {
+          id: `${actorId}_body`,
+          shape: 'rect',
+          width: e.sizeUnits * 0.58,
+          height: e.sizeUnits * 0.5,
+          offset: { x: 0, y: -e.sizeUnits * 0.02 }
+        });
+        e.combat = combatActor;
+        e.hurtbox = hb;
         enemies.push(e);
       }
 
-      async function spawnBat(x, footY, minX, maxX) {
-        const e = { type: 'bat', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
+    async function spawnBat(x, footY, minX, maxX) {
+        const e = {
+          type: 'bat', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
-          hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0 };
+          hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
+          alignToFoot: false,
+          engageRangeX: 9.5, engageRangeY: 4.2, disengageRangeX: 12.0, wakeRange: 7.2,
+          hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
+          homeX: x, hitReactUntil: 0,
+          orbitOffset: 2.8,
+          awakened: false,
+          staggered: false, staggerUntil: 0,
+          dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
+          fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
+          fallGravity: -26,
+          dead: false, combat: null, hurtbox: null
+        };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
-        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false);
-        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true);
+        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
+        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
         setEnemyAnim(e, 'sleep');
         const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
         const mat = new BABYLON.StandardMaterial('dbgMatBat', scene);
         mat.wireframe = true; mat.emissiveColor = new BABYLON.Color3(0, 1, 0);
         box.material = mat; box.isVisible = enemyDbg; box.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 128, height: 32 }, scene, false);
+        const dt = new BABYLON.DynamicTexture(`lbl_${e.type}`, { width: 160, height: 48 }, scene, false);
         dt.hasAlpha = true;
         const lmat = new BABYLON.StandardMaterial('lblMatBat', scene);
         lmat.diffuseTexture = dt; lmat.emissiveColor = new BABYLON.Color3(1, 1, 0); lmat.backFaceCulling = false;
-        const plane = BABYLON.MeshBuilder.CreatePlane(`lbl_${e.type}`, { size: 1.5 }, scene);
+        const plane = BABYLON.MeshBuilder.CreatePlane(`lbl_${e.type}`, { size: 1.4 }, scene);
         plane.material = lmat; plane.isVisible = enemyDbg; plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx: dt.getContext() };
+        const ctx = dt.getContext();
+        e.debugMesh = box; e.debugLabel = { mesh: plane, tex: dt, ctx, w: 160, h: 48 };
+
+        const actorId = `bat_${enemies.length}_${Date.now().toString(36)}`;
+        const combatActor = Combat.registerActor({
+          id: actorId,
+          team: 'enemy',
+          hpMax: e.hpMax,
+          hp: e.hpMax,
+          poiseThreshold: e.poiseThreshold,
+          staggerDurationMs: 520,
+          poiseResetDelayMs: 1400,
+          poiseRegenPerSec: 14,
+          getPosition: () => ({ x: e.x, y: e.y }),
+          getFacing: () => e.facing,
+          onHealthChange: (hp) => { e.hp = hp; },
+          onPoiseChange: (poise) => { e.poise = poise; },
+          onDamage: () => {
+            const now = performance.now();
+            e.lastHitAt = now;
+            if (e.dying || e.dead) return;
+            e.awakened = true;
+            e.state = 'hit';
+            e.hitReactUntil = now + 200;
+            if (e.mgr.hit) setEnemyAnim(e, 'hit');
+          },
+          onStagger: () => {
+            e.staggered = true;
+            e.staggerUntil = combatActor.staggeredUntil;
+            e.awakened = true;
+            e.state = 'stagger';
+            e.vx = 0; e.vy = 0;
+            if (e.mgr.hit) setEnemyAnim(e, 'hit');
+          },
+          onStaggerEnd: ({ now }) => {
+            e.staggered = false;
+            e.staggerUntil = 0;
+            e.state = 'fly';
+            e.awakened = true;
+            if (e.mgr.fly) setEnemyAnim(e, 'fly');
+            e.hitReactUntil = now;
+          },
+          onDeath: () => {
+            if (e.dead || e.dying) return;
+            const now = performance.now();
+            e.dying = true;
+            e.deathAt = now;
+            e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
+            if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
+            Combat.removeActor(combatActor);
+            e.combat = null;
+            e.hurtbox = null;
+            e.vx = 0;
+            e.vy = -1.2;
+          }
+        });
+        const hb = Combat.registerHurtbox(combatActor, {
+          id: `${actorId}_body`,
+          shape: 'rect',
+          width: e.sizeUnits * 0.46,
+          height: e.sizeUnits * 0.4,
+          offset: { x: 0, y: -e.sizeUnits * 0.02 }
+        });
+        e.combat = combatActor;
+        e.hurtbox = hb;
         enemies.push(e);
       }
 
       function updateWolf(e, dt) {
-        const playerX = playerSprite.sprite?.position.x ?? 0;
-        const chaseRange = 5;
-        const stopRange = 0.6; // keep some distance from the player
-        const dx = playerX - e.x;
-        if (Math.abs(dx) < chaseRange) {
-          if (Math.abs(dx) > stopRange) {
-            e.dir = (dx < 0) ? -1 : 1;
-            e.vx = e.dir * 2.3;
-          } else {
-            e.vx = 0; // close enough – don't jitter on top of the player
+        const now = performance.now();
+        updateEnemyFade(e, now);
+        if (e.fadeDone) return;
+        if (e.dead) {
+          if (e.sprite) {
+            e.sprite.position.x = e.x;
+            e.sprite.position.y = e.y;
+            e.sprite.invertU = (e.facing < 0);
           }
-        } else {
-          if (e.x < e.patrolMin) e.dir = 1;
-          if (e.x > e.patrolMax) e.dir = -1;
-          e.vx = e.dir * 2.3;
+          return;
         }
-        if (e.vx !== 0) e.facing = e.dir;
-        if (e.onGround) {
-          e.jumpCd -= dt;
-          if (e.jumpCd <= 0) { e.vy = e.jumpVel; e.onGround = false; e.jumpCd = 2 + Math.random() * 2; }
-        } else {
+        const playerX = playerSprite.sprite?.position.x ?? 0;
+        const dx = playerX - e.x;
+        const absDx = Math.abs(dx);
+        const dying = e.dying && !e.dead;
+
+        e.playerSeen = e.playerSeen || absDx < 7.5;
+
+        if (!dying && e.state === 'hit' && now >= e.hitReactUntil) {
+          e.state = e.playerSeen ? 'stalk' : 'patrol';
+        }
+
+        if (!dying && e.state === 'patrol' && e.playerSeen) {
+          e.state = 'stalk';
+        }
+
+        const wasOnGround = e.onGround;
+        let landed = false;
+
+        switch (e.state) {
+          case 'patrol': {
+            if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
+            if (e.x < e.patrolMin + 0.1) e.dir = 1;
+            if (e.x > e.patrolMax - 0.1) e.dir = -1;
+            e.vx = e.dir * 1.7;
+            e.facing = e.dir;
+            break;
+          }
+          case 'stalk': {
+            if (dying) { e.vx *= 0.9; break; }
+            if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
+            const targetX = computeWolfTargetX(e, playerX);
+            const diff = targetX - e.x;
+            const speed = absDx > 4 ? 3.3 : 2.9;
+            if (Math.abs(diff) > 0.1) {
+              e.vx = Math.sign(diff) * speed;
+            } else {
+              e.vx = 0;
+            }
+            e.facing = dx >= 0 ? 1 : -1;
+            if (!e.pendingLandingState && e.attackQueue.length === 0 && now >= e.nextComboAt) {
+              if (absDx <= 5.2) {
+                const combo = chooseWolfCombo(e, absDx);
+                if (combo.length > 0) {
+                  e.attackQueue = combo;
+                  e.comboIndex = 0;
+                  e.nextComboAt = now + 200; // prevent instant reselection
+                  const readyDelay = absDx > 2.6 ? 160 : 200;
+                  startWolfReady(e, readyDelay);
+                }
+              }
+            }
+            break;
+          }
+          case 'ready': {
+            e.vx = 0;
+            e.vy = 0;
+            e.facing = dx >= 0 ? 1 : -1;
+            if (!dying && !e.pendingLandingState && now >= e.readyUntil) {
+              const name = e.attackQueue[e.comboIndex];
+              if (!name) {
+                finishWolfAttack(e);
+              } else {
+                const launch = startWolfAttack(e, name);
+                if (launch === 'defer') {
+                  break;
+                }
+                if (!launch) {
+                  finishWolfAttack(e);
+                }
+              }
+            }
+            if (dying || e.pendingLandingState) {
+              e.attackQueue = [];
+              e.comboIndex = 0;
+            }
+            break;
+          }
+          case 'attack': {
+            e.facing = dx >= 0 ? 1 : -1;
+            const attack = e.currentAttack;
+            const def = attack?.def;
+            if (!attack || !def) {
+              if (!dying && !e.pendingLandingState) finishWolfAttack(e);
+              break;
+            }
+            if (dying || e.pendingLandingState) break;
+            if (!attack.spawned && attack.hitAt != null && now >= attack.hitAt) {
+              spawnWolfHitbox(e, def);
+              attack.spawned = true;
+              e.vx *= 0.4;
+            }
+            if (attack.endAt != null && now >= attack.endAt) {
+              finishWolfAttack(e, { def });
+            }
+            break;
+          }
+          case 'leap': {
+            e.facing = dx >= 0 ? 1 : -1;
+            const leap = e.leapState;
+            if (!leap) {
+              if (!dying && !e.pendingLandingState) finishWolfAttack(e);
+            } else {
+              if (e.vy > 0.3 && e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
+              else if (e.vy < -0.3 && e.mgr.jumpDown) setEnemyAnim(e, 'jumpDown');
+              else if (e.mgr.jumpMid) setEnemyAnim(e, 'jumpMid');
+              if (!dying && !e.pendingLandingState && now >= leap.endBy) {
+                finishWolfAttack(e, { def: leap.def });
+              } else if ((dying || e.pendingLandingState) && now >= leap.endBy) {
+                e.leapState = null;
+              }
+            }
+            break;
+          }
+          case 'recover': {
+            e.vx *= 0.85;
+            if (!dying && now >= e.stateUntil) {
+              e.state = 'stalk';
+              if (e.mgr.run) setEnemyAnim(e, 'run');
+            }
+            break;
+          }
+          case 'stagger':
+          case 'hit': {
+            e.vx = 0;
+            e.vy = 0;
+            break;
+          }
+          default:
+            break;
+        }
+
+        if (e.state !== 'leap' && !e.onGround) {
+          e.vy += e.gravity * dt;
+        } else if (e.state === 'leap') {
           e.vy += e.gravity * dt;
         }
+
         e.x += e.vx * dt;
         e.y += e.vy * dt;
-        const ground = centerFromFoot(e, 0);
-        if (e.y <= ground) { e.y = ground; e.vy = 0; e.onGround = true; }
-        if (!e.onGround) {
-          if (e.vy > 0.2) setEnemyAnim(e, 'jumpUp');
-          else if (e.vy < -0.2) setEnemyAnim(e, 'jumpDown');
-          else setEnemyAnim(e, 'jumpMid');
-        } else {
-          setEnemyAnim(e, 'run');
+
+        if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
+          e.x = Math.max(e.patrolMin - 0.2, Math.min(e.patrolMax + 0.2, e.x));
         }
+
+        const ground = centerFromFoot(e, 0);
+        if (e.y <= ground) {
+          e.y = ground;
+          if (!wasOnGround) landed = true;
+          e.vy = 0;
+          e.onGround = true;
+        } else {
+          e.onGround = false;
+        }
+
+        if (landed) {
+          if (e.pendingLandingState) {
+            const pending = e.pendingLandingState;
+            e.pendingLandingState = null;
+            e.leapState = null;
+            if (pending.type === 'hit') {
+              e.vx = 0;
+              e.vy = 0;
+              e.state = 'hit';
+              e.hitReactUntil = Math.max(now + 80, pending.until || (now + 220));
+              e.stateUntil = e.hitReactUntil;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            } else if (pending.type === 'stagger') {
+              e.vx = 0;
+              e.vy = 0;
+              e.state = 'stagger';
+              e.staggered = true;
+              e.staggerUntil = pending.until || (now + 400);
+              e.stateUntil = e.staggerUntil;
+              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
+              if (e.mgr.hit) setEnemyAnim(e, 'hit');
+            } else if (pending.type === 'dead') {
+              finalizeWolfDeath(e, now);
+            }
+          } else if (dying) {
+            finalizeWolfDeath(e, now);
+          }
+        }
+
+        if (e.state === 'leap' && e.leapState) {
+          const leap = e.leapState;
+          const minAir = leap.def?.minAirTime ?? 0;
+          if ((landed && (now - leap.start) >= minAir) || (!landed && now >= leap.endBy)) {
+            if (!dying && !e.pendingLandingState) {
+              finishWolfAttack(e, { def: leap.def });
+            } else {
+              e.leapState = null;
+            }
+          }
+        }
+
+        if (!dying && e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
+          e.state = e.playerSeen ? 'stalk' : 'patrol';
+          if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+        }
+
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
@@ -985,46 +2312,164 @@
       }
 
       function updateBat(e, dt) {
-        const playerX = playerSprite.sprite?.position.x ?? 0;
-        const dist = Math.abs(playerX - e.x);
-        if (e.state === 'sleep' && dist < 4) { e.state = 'wake'; setEnemyAnim(e, 'wake'); }
-        if (e.state === 'wake' && performance.now() > e.animStart + e.animDur) {
-          e.state = 'fly'; setEnemyAnim(e, 'fly');
-        }
-        if (e.state === 'fly') {
-          if (dist < 5) e.dir = (playerX < e.x) ? -1 : 1;
-          else {
-            if (e.x < e.patrolMin) e.dir = 1;
-            if (e.x > e.patrolMax) e.dir = -1;
+        const now = performance.now();
+        updateEnemyFade(e, now);
+        if (e.fadeDone) return;
+
+        const playerSpritePos = playerSprite.sprite?.position;
+        const playerX = playerSpritePos?.x ?? 0;
+        const playerY = playerSpritePos?.y ?? 0;
+        const dx = playerX - e.x;
+        const horizontalHome = Math.abs(playerX - e.homeX);
+        const horizontalBat = Math.abs(dx);
+        const verticalBat = Math.abs(playerY - e.y);
+
+        if (e.dead) {
+          if (e.sprite) {
+            e.sprite.position.x = e.x;
+            e.sprite.position.y = e.y;
+            e.sprite.invertU = (e.facing < 0);
           }
-          e.vx = e.dir * 1.5;
-          e.x += e.vx * dt;
-          e.facing = e.dir;
-          e.bob += dt;
-          const hover = e.hover + Math.sin(e.bob * 2) * 0.3;
-          e.y = centerFromFoot(e, hover);
+          return;
         }
+
+        if (e.dying) {
+          const gravity = e.fallGravity ?? -26;
+          e.vy += gravity * dt;
+          e.vy = Math.max(e.vy, -10);
+          e.y += e.vy * dt;
+          e.x += e.vx * dt;
+          const ground = centerFromFoot(e, 0);
+          if (e.y <= ground) {
+            e.y = ground;
+            e.vy = 0;
+            finalizeBatDeath(e, now);
+          }
+          if (e.sprite) {
+            e.sprite.position.x = e.x;
+            e.sprite.position.y = e.y;
+            e.sprite.invertU = (e.facing < 0);
+          }
+          return;
+        }
+
+        if (e.state === 'hit' && now >= e.hitReactUntil) {
+          e.state = 'fly';
+          e.awakened = true;
+          if (e.mgr.fly) setEnemyAnim(e, 'fly');
+        }
+
+        switch (e.state) {
+          case 'sleep': {
+            if (e.awakened) {
+              e.state = 'fly';
+              if (e.mgr.fly) setEnemyAnim(e, 'fly');
+              break;
+            }
+            e.vx = 0;
+            e.vy = 0;
+            e.x += (e.homeX - e.x) * 0.08;
+            e.y = centerFromFoot(e, e.hover);
+            const wakeRange = e.wakeRange ?? e.engageRangeX ?? 6;
+            if (horizontalHome <= wakeRange) {
+              e.state = 'wake';
+              if (e.mgr.wake) setEnemyAnim(e, 'wake');
+            }
+            break;
+          }
+          case 'wake': {
+            e.vx = 0;
+            e.vy = 0;
+            e.y = centerFromFoot(e, e.hover);
+            if (now >= (e.animStart + e.animDur - 1)) {
+              e.state = 'fly';
+              e.awakened = true;
+              if (e.mgr.fly) setEnemyAnim(e, 'fly');
+            }
+            break;
+          }
+          case 'stagger':
+          case 'hit': {
+            e.vx = 0;
+            e.vy = 0;
+            break;
+          }
+          case 'fly':
+          default: {
+            e.bob += dt * 2.2;
+            const hover = e.hover + Math.sin(e.bob) * 0.35;
+            const targetY = centerFromFoot(e, hover);
+            e.y += (targetY - e.y) * Math.min(1, dt * 7);
+
+            const bounds = getBatHorizontalBounds(e);
+            const engageRangeX = e.engageRangeX ?? 6.2;
+            const engageRangeY = e.engageRangeY ?? 3.4;
+            const withinDetection = verticalBat <= engageRangeY &&
+              (horizontalHome <= engageRangeX || horizontalBat <= engageRangeX);
+
+            let desiredX = e.x;
+            if (withinDetection) {
+              e.awakened = true;
+              const orbit = e.orbitOffset ?? 2.8;
+              const side = dx >= 0 ? -1 : 1;
+              desiredX = clampBatX(e, playerX + side * orbit, bounds, false);
+            } else {
+              const patrolMin = Number.isFinite(e.patrolMin) ? e.patrolMin : bounds.min;
+              const patrolMax = Number.isFinite(e.patrolMax) ? e.patrolMax : bounds.max;
+              if (!Number.isFinite(e.dir) || e.dir === 0) e.dir = 1;
+              if (e.x <= patrolMin + 0.1) e.dir = 1;
+              else if (e.x >= patrolMax - 0.1) e.dir = -1;
+              desiredX = clampBatX(e, e.x + e.dir * 0.5, bounds, false);
+            }
+
+            const diff = desiredX - e.x;
+            const speed = withinDetection ? (Math.abs(diff) > 2 ? 3.2 : 2.4) : 1.6;
+            if (Math.abs(diff) > 0.05) {
+              e.vx = Math.sign(diff) * speed;
+              e.x += e.vx * dt;
+            } else {
+              e.vx = 0;
+            }
+            e.facing = diff >= 0 ? 1 : -1;
+            break;
+          }
+        }
+
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
           e.sprite.invertU = (e.facing < 0);
         }
       }
-
       function updateEnemies(dt) {
+        assignWolfPackRoles();
         enemies.forEach(e => {
           if (!e.sprite) return;
           if (e.type === 'wolf') updateWolf(e, dt); else updateBat(e, dt);
-          if (e.debugMesh) { e.debugMesh.position.x = e.x; e.debugMesh.position.y = e.y; e.debugMesh.isVisible = enemyDbg; }
+          if (e.debugMesh) {
+            e.debugMesh.position.x = e.x;
+            e.debugMesh.position.y = e.y;
+            e.debugMesh.isVisible = enemyDbg && !e.fadeDone;
+          }
           if (e.debugLabel) {
             const lbl = e.debugLabel;
             lbl.mesh.position.x = e.x;
             lbl.mesh.position.y = e.y + e.sizeUnits * 0.6;
-            if (enemyDbg) {
-              lbl.ctx.clearRect(0, 0, 128, 32);
+            if (enemyDbg && !e.fadeDone) {
+              const texW = lbl.w || 160;
+              const texH = lbl.h || 48;
+              lbl.ctx.clearRect(0, 0, texW, texH);
               lbl.ctx.fillStyle = '#ffff00';
               lbl.ctx.font = '16px monospace';
-              lbl.ctx.fillText(e.state || e.anim, 2, 24);
+              const status = e.dead ? 'dead' : (e.state || e.anim);
+              lbl.ctx.fillText(status, 2, 18);
+              const hpLine = `HP:${Math.max(0, Math.round(e.hp ?? 0)).toString().padStart(3)} PO:${Math.max(0, Math.round(e.poise ?? 0)).toString().padStart(2)}`;
+              const hpY = Math.min(texH - 14, 34);
+              lbl.ctx.fillText(hpLine, 2, hpY);
+              if (e.packRole) {
+                const roleY = Math.min(texH - 2, hpY + 16);
+                lbl.ctx.fillText(`Role:${e.packRole}`, 2, roleY);
+              }
               lbl.tex.update();
               lbl.mesh.isVisible = true;
             } else {
@@ -1103,10 +2548,19 @@
       setST(stats.stam - stats.lightCost);
       state.flasking = false;
       state.acting = true; combo.stage = stage; combo.queued = false;
+      combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim(name, false);
       const now = performance.now();
       combo.endAt = now + playerSprite.animDurationMs;
       combo.cancelAt = now + playerSprite.animDurationMs * (meta.cancelFrac ?? 0.6);
+      const attackDef = PLAYER_ATTACKS[name];
+      if (attackDef) {
+        const animDur = playerSprite.animDurationMs || ((meta.frames / meta.fps) * 1000);
+        const frac = attackDef.hitFrac ?? 0.45;
+        combo.pendingHit = true;
+        combo.hitAt = now + animDur * frac;
+        combo.hitMeta = { attackId: name, stage };
+      }
       return true;
     }
     function tryStartLight() {
@@ -1131,6 +2585,9 @@
       heavy.hitMeta = null;
       heavy.releaseDamage = 0;
       heavy.releaseStagger = 0;
+      combo.pendingHit = false;
+      combo.hitMeta = null;
+      combo.hitAt = 0;
       if (!keepActing) state.acting = false;
     }
 
@@ -1144,7 +2601,7 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.flasking = false;
       state.acting = true;
-      combo.stage = 0; combo.queued = false;
+      combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       const now = performance.now();
       heavy.charging = true;
       heavy.releasing = false;
@@ -1196,6 +2653,7 @@
       heavy.hitApplied = false;
       heavy.hitMeta = {
         type: 'heavy',
+        attackId: 'heavy',
         charged: heavy.charged,
         hitstopMs: HITSTOP_HEAVY_MS + (heavy.charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0),
         shakeMagnitude: CAMERA_SHAKE_MAG * (heavy.charged ? 1.4 : 1.0),
@@ -1212,15 +2670,16 @@
     }
 
     // Hurt + Death
-    function triggerHurt(dmg = 15) {
+    function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
-      setHP(stats.hp - dmg);
+      if (!opts.alreadyApplied) setHP(stats.hp - dmg);
       applyImpactEffects({ hitstopMs: HITSTOP_HURT_MS, shakeMagnitude: CAMERA_SHAKE_MAG * 1.05, shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 1.1 });
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
       state.acting = true; combo.stage = 0; combo.queued = false;
+      combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('hurt', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
@@ -1230,7 +2689,7 @@
       resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       state.blocking = false; state.parryOpen = false;
-      combo.stage = 0; combo.queued = false;
+      combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('death', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
@@ -1242,6 +2701,11 @@
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
+        if (playerActor) {
+          playerActor.alive = true;
+          playerActor.hp = stats.hp;
+          Combat.clearInvulnerability(playerActor);
+        }
         state.dead = false; state.acting = false; state.flasking = false;
         resetHeavyState();
         setAnim('idle', true);
@@ -1310,9 +2774,17 @@
         heavy.chargeRatio = Math.max(0, Math.min(1, heavy.chargeHoldMs / HEAVY_CHARGE_MAX_MS));
         heavy.charged = heavy.chargeHoldMs >= HEAVY_CHARGE_MIN_MS;
       }
+      if (combo.pendingHit && now >= combo.hitAt) {
+        const stageId = combo.stage || (combo.hitMeta?.stage) || 1;
+        const meta = combo.hitMeta || { attackId: `light${stageId}`, stage: stageId };
+        combo.pendingHit = false;
+        combo.hitAt = 0;
+        combo.hitMeta = null;
+        onPlayerAttackLand(meta);
+      }
       if (heavy.pendingHit && !heavy.hitApplied && now >= heavy.hitAt) {
         heavy.hitApplied = true;
-        const meta = heavy.hitMeta || { type: 'heavy', charged: heavy.charged };
+        const meta = heavy.hitMeta || { type: 'heavy', attackId: 'heavy', charged: heavy.charged };
         onPlayerAttackLand(meta);
         heavy.pendingHit = false;
         heavy.hitMeta = null;
@@ -1393,8 +2865,21 @@
         state.rollT += dt;
         state.vx = state.facing * stats.rollSpeed;
         const t = state.rollT;
-        state.iFramed = (t >= stats.iFrameStart) && (t <= stats.iFrameEnd);
-        if (state.rollT >= stats.rollDur) { state.rolling = false; state.iFramed = false; }
+        const iNow = (t >= stats.iFrameStart) && (t <= stats.iFrameEnd);
+        if (iNow !== state.iFramed) {
+          state.iFramed = iNow;
+          Combat.setInvulnerable(playerActor, 'roll', state.iFramed);
+        }
+        if (state.rollT >= stats.rollDur) {
+          state.rolling = false;
+          if (state.iFramed) {
+            state.iFramed = false;
+            Combat.setInvulnerable(playerActor, 'roll', false);
+          }
+        }
+      } else if (state.iFramed) {
+        state.iFramed = false;
+        Combat.setInvulnerable(playerActor, 'roll', false);
       }
 
       // Light/Heavy/Flask/Debug
@@ -1414,6 +2899,7 @@
           // next stage started
         } else {
           combo.stage = 0; combo.queued = false;
+          combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
           state.acting = false;
         }
       }
@@ -1582,11 +3068,14 @@
       const busy = state.rolling || state.acting || state.dead;
       if (!busy && stats.stam < stats.stamMax) setST(stats.stam + stats.stamRegenPerSec * dt);
       updateEnemies(dt);
+      Combat.update(dt, now);
       updateOverlay();
       scene.render();
     });
 
     window.addEventListener('resize', () => { engine.resize(); fitOrtho(); });
+
+    if (typeof window !== 'undefined') window.EotRCombat = Combat;
 
     console.log('[EotR] Phase 2.3.1 (Parry/Block bugfix) boot OK');
   } catch (err) {
