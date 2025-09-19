@@ -1545,29 +1545,6 @@
           cooldownMs: 520
         }
       };
-
-      const BAT_ATTACK_DATA = {
-        dive: {
-          anim: 'attack',
-          hitFrac: 0.78,
-          durationMs: 160,
-          travelMs: 520,
-          damage: 9,
-          poise: 9,
-          width: e => e.sizeUnits * 0.66,
-          height: e => e.sizeUnits * 0.46,
-          offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
-          cooldownMs: 900,
-          followX: 7.4,
-          followY: 3.2,
-          waveAmp: 0.96,
-          minHorizontal: 1.05,
-          minWave: 0.58,
-          maxWave: 1.68,
-          targetChase: 0.22
-        }
-      };
-
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
         const dx = playerX - e.x;
@@ -1719,26 +1696,6 @@
           e.nextComboAt = now + cooldown;
         }
       }
-
-      function spawnBatHitbox(e, def) {
-        if (!e.combat || !def || e.dying) return;
-        const width = typeof def.width === 'function' ? def.width(e) : def.width;
-        const height = typeof def.height === 'function' ? def.height(e) : def.height;
-        const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
-        Combat.spawnHitbox(e.combat, {
-          shape: 'rect',
-          width: width ?? 0,
-          height: height ?? 0,
-          offset,
-          durationMs: def.durationMs ?? 120,
-          damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
-          poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
-          getOrigin: () => ({ x: e.x, y: e.y }),
-          getFacing: () => e.facing,
-          meta: { enemy: 'bat', attack: 'dive' }
-        });
-      }
-
       function assignWolfPackRoles() {
         const wolves = enemies.filter(en => en.type === 'wolf' && !en.dead && !en.dying);
         if (wolves.length === 0) return;
@@ -2270,6 +2227,74 @@
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
 
+      function getBatHorizontalBounds(e) {
+        const engage = e.engageRangeX;
+        let clampMin = Number.isFinite(e.patrolMin) ? e.patrolMin : (e.homeX - 3);
+        let clampMax = Number.isFinite(e.patrolMax) ? e.patrolMax : (e.homeX + 3);
+        if (Number.isFinite(engage)) {
+          const detectMin = e.homeX - engage;
+          const detectMax = e.homeX + engage;
+          clampMin = Math.min(clampMin, detectMin);
+          clampMax = Math.max(clampMax, detectMax);
+        }
+        if (!Number.isFinite(clampMin)) clampMin = e.homeX - 3;
+        if (!Number.isFinite(clampMax)) clampMax = e.homeX + 3;
+        if (clampMax < clampMin) {
+          const mid = e.homeX || 0;
+          clampMin = Math.min(clampMin, mid);
+          clampMax = Math.max(clampMax, mid);
+        }
+        return { min: clampMin, max: clampMax };
+      }
+
+      function clampBatX(e, value, bounds = getBatHorizontalBounds(e), usePad = true) {
+        const clampMin = bounds?.min;
+        const clampMax = bounds?.max;
+        if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
+          if (clampMax <= clampMin) return clampMin;
+          if (!usePad) return Math.max(clampMin, Math.min(clampMax, value));
+          const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
+          const innerMin = clampMin + edgePad;
+          const innerMax = clampMax - edgePad;
+          if (innerMax <= innerMin) {
+            return Math.max(clampMin, Math.min(clampMax, value));
+          }
+          return Math.max(innerMin, Math.min(innerMax, value));
+        }
+        return value;
+      }
+
+      // Bat dive mechanic removed; bats currently have no attack behavior.
+
+      function finalizeWolfDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.onGround = true;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        e.leapState = null;
+        e.attackQueue = [];
+        e.currentAttack = null;
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
+
+      function finalizeBatDeath(e, now = performance.now()) {
+        if (!e || e.dead) return;
+        e.pendingLandingState = null;
+        e.dying = false;
+        e.dead = true;
+        e.state = 'dead';
+        e.vx = 0;
+        e.vy = 0;
+        e.deathAt = e.deathAt || now;
+        e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
+        if (e.mgr.dead) setEnemyAnim(e, 'dead');
+      }
     async function spawnWolf(x, footY, minX, maxX) {
         const e = {
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
@@ -2419,15 +2444,12 @@
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           alignToFoot: false,
-          engageRangeX: 9.5, engageRangeY: 4.2, attackRangeX: 6.4, disengageRangeX: 12.0, wakeRange: 7.2,
+          engageRangeX: 9.5, engageRangeY: 4.2, disengageRangeX: 12.0, wakeRange: 7.2,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
-          comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
-          attackDidSpawn: false, dive: null, rebound: null, reboundTarget: { x, y: 0 },
           homeX: x, hitReactUntil: 0,
           orbitOffset: 2.8,
           awakened: false,
           staggered: false, staggerUntil: 0,
-          pendingLandingState: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           fallGravity: -26,
@@ -2436,7 +2458,6 @@
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
         await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true, true);
-        await loadEnemySheet(e, 'attack', 'assets/sprites/bat/Attack.png', 12, false, true);
         await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
         await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
@@ -2470,34 +2491,22 @@
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
           onPoiseChange: (poise) => { e.poise = poise; },
-          onDamage: (event) => {
+          onDamage: () => {
             const now = performance.now();
             e.lastHitAt = now;
-            if (e.dying || e.dead || event?.staggered) return;
+            if (e.dying || e.dead) return;
+            e.awakened = true;
             e.state = 'hit';
             e.hitReactUntil = now + 200;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            e.attackDidSpawn = false;
-            e.dive = null;
-            e.rebound = null;
-            e.attackHitAt = 0;
-            e.attackEndAt = 0;
-            e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
           },
           onStagger: () => {
-            const now = performance.now();
             e.staggered = true;
             e.staggerUntil = combatActor.staggeredUntil;
+            e.awakened = true;
             e.state = 'stagger';
             e.vx = 0; e.vy = 0;
-            e.comboRemaining = 0;
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            e.dive = null;
-            e.rebound = null;
-            e.attackDidSpawn = false;
-            e.attackHitAt = 0;
-            e.attackEndAt = 0;
-            e.nextAttackAt = Math.max(e.nextAttackAt, now + 720);
           },
           onStaggerEnd: ({ now }) => {
             e.staggered = false;
@@ -2505,8 +2514,7 @@
             e.state = 'fly';
             e.awakened = true;
             if (e.mgr.fly) setEnemyAnim(e, 'fly');
-            e.nextAttackAt = now + 520;
-            e.comboRemaining = Math.max(1, (Math.random() < 0.6 ? 2 : 1));
+            e.hitReactUntil = now;
           },
           onDeath: () => {
             if (e.dead || e.dying) return;
@@ -2514,15 +2522,10 @@
             e.dying = true;
             e.deathAt = now;
             e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
-            e.comboRemaining = 0;
-            e.attackDidSpawn = false;
-            e.dive = null;
-            e.rebound = null;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
             e.hurtbox = null;
-            e.pendingLandingState = { type: 'dead' };
             e.vx = 0;
             e.vy = -1.2;
           }
@@ -2751,6 +2754,7 @@
           e.state = e.playerSeen ? 'stalk' : 'patrol';
           if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
         }
+
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
@@ -2762,13 +2766,15 @@
         const now = performance.now();
         updateEnemyFade(e, now);
         if (e.fadeDone) return;
+
         const playerSpritePos = playerSprite.sprite?.position;
         const playerX = playerSpritePos?.x ?? 0;
         const playerY = playerSpritePos?.y ?? 0;
         const dx = playerX - e.x;
-        const dy = playerY - e.y;
-        const dist = Math.hypot(dx, dy);
-        const horizontalToHome = Math.abs(playerX - e.homeX);
+        const horizontalHome = Math.abs(playerX - e.homeX);
+        const horizontalBat = Math.abs(dx);
+        const verticalBat = Math.abs(playerY - e.y);
+
         if (e.dead) {
           if (e.sprite) {
             e.sprite.position.x = e.x;
@@ -2802,17 +2808,12 @@
           e.state = 'fly';
           e.awakened = true;
           if (e.mgr.fly) setEnemyAnim(e, 'fly');
-          e.nextAttackAt = now + 520;
-          if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
         }
 
         switch (e.state) {
           case 'sleep': {
             if (e.awakened) {
               e.state = 'fly';
-              e.awakened = true;
-              if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
-              e.nextAttackAt = Math.max(now + 420, e.nextAttackAt);
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
               break;
             }
@@ -2821,35 +2822,59 @@
             e.x += (e.homeX - e.x) * 0.08;
             e.y = centerFromFoot(e, e.hover);
             const wakeRange = e.wakeRange ?? e.engageRangeX ?? 6;
-            if (horizontalToHome <= wakeRange && now >= e.nextAttackAt) {
+            if (horizontalHome <= wakeRange) {
               e.state = 'wake';
               if (e.mgr.wake) setEnemyAnim(e, 'wake');
             }
             break;
           }
           case 'wake': {
+            e.vx = 0;
+            e.vy = 0;
+            e.y = centerFromFoot(e, e.hover);
             if (now >= (e.animStart + e.animDur - 1)) {
               e.state = 'fly';
               e.awakened = true;
               if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              e.comboRemaining = randChoice([1, 2, 2, 3]);
-              e.nextAttackAt = now + 420;
             }
-            e.y = centerFromFoot(e, e.hover);
             break;
           }
-          case 'fly': {
+          case 'stagger':
+          case 'hit': {
+            e.vx = 0;
+            e.vy = 0;
+            break;
+          }
+          case 'fly':
+          default: {
             e.bob += dt * 2.2;
             const hover = e.hover + Math.sin(e.bob) * 0.35;
             const targetY = centerFromFoot(e, hover);
-            const yLerp = Math.min(1, dt * 7);
-            e.y += (targetY - e.y) * yLerp;
+            e.y += (targetY - e.y) * Math.min(1, dt * 7);
+
             const bounds = getBatHorizontalBounds(e);
-            const orbit = e.orbitOffset ?? 2.8;
-            const desiredRaw = playerX + (dx >= 0 ? -orbit : orbit);
-            const desiredX = clampBatX(e, desiredRaw, bounds, false);
+            const engageRangeX = e.engageRangeX ?? 6.2;
+            const engageRangeY = e.engageRangeY ?? 3.4;
+            const withinDetection = verticalBat <= engageRangeY &&
+              (horizontalHome <= engageRangeX || horizontalBat <= engageRangeX);
+
+            let desiredX = e.x;
+            if (withinDetection) {
+              e.awakened = true;
+              const orbit = e.orbitOffset ?? 2.8;
+              const side = dx >= 0 ? -1 : 1;
+              desiredX = clampBatX(e, playerX + side * orbit, bounds, false);
+            } else {
+              const patrolMin = Number.isFinite(e.patrolMin) ? e.patrolMin : bounds.min;
+              const patrolMax = Number.isFinite(e.patrolMax) ? e.patrolMax : bounds.max;
+              if (!Number.isFinite(e.dir) || e.dir === 0) e.dir = 1;
+              if (e.x <= patrolMin + 0.1) e.dir = 1;
+              else if (e.x >= patrolMax - 0.1) e.dir = -1;
+              desiredX = clampBatX(e, e.x + e.dir * 0.5, bounds, false);
+            }
+
             const diff = desiredX - e.x;
-            const speed = Math.abs(diff) > 2.2 ? 3.4 : 2.4;
+            const speed = withinDetection ? (Math.abs(diff) > 2 ? 3.2 : 2.4) : 1.6;
             if (Math.abs(diff) > 0.05) {
               e.vx = Math.sign(diff) * speed;
               e.x += e.vx * dt;
@@ -2857,235 +2882,15 @@
               e.vx = 0;
             }
             e.facing = diff >= 0 ? 1 : -1;
-            if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
-            const engageRangeX = e.engageRangeX ?? 6.2;
-            const engageRangeY = e.engageRangeY ?? 3.4;
-            const attackRangeX = e.attackRangeX ?? 4.4;
-            const horizontalHomeNow = Math.abs(playerX - e.homeX);
-            const horizontalBatNow = Math.abs(playerX - e.x);
-            const verticalBatNow = Math.abs(playerY - e.y);
-            const withinDetection = verticalBatNow <= engageRangeY && (horizontalHomeNow <= engageRangeX || horizontalBatNow <= engageRangeX);
-            if (!withinDetection) {
-              e.comboRemaining = 0;
-              e.nextAttackAt = Math.max(e.nextAttackAt, now + 420);
-              break;
-            }
-            if (now >= e.nextAttackAt && e.comboRemaining > 0) {
-              if (horizontalBatNow <= attackRangeX) {
-                if (startBatDive(e, now, playerX, playerY)) break;
-              } else {
-                e.nextAttackAt = now + 160;
-              }
-            }
             break;
           }
-          case 'attack': {
-            const attackDef = BAT_ATTACK_DATA.dive;
-            const dive = e.dive;
-            if (!dive) {
-              e.state = 'rebound';
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              const hoverY = centerFromFoot(e, e.hover + 0.2);
-              e.reboundTarget.x = e.x;
-              e.reboundTarget.y = hoverY;
-              e.rebound = {
-                startTime: now,
-                duration: 360,
-                startX: e.x,
-                startY: e.y,
-                targetX: e.x,
-                targetY: hoverY
-              };
-              e.vx = 0;
-              e.vy = 0;
-              break;
-            }
-            const bounds = getBatHorizontalBounds(e);
-            const duration = dive.duration ?? (attackDef?.travelMs ?? 520);
-            const elapsed = now - dive.startTime;
-            const t = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
-            const chaseFactor = attackDef?.targetChase ?? 0;
-            if (chaseFactor > 0.0001 && dive) {
-              const followX = dive.followX;
-              const applyFollowLimit = (candidate) => {
-                if (!Number.isFinite(followX)) return candidate;
-                const limitedDx = Math.max(-followX, Math.min(followX, candidate - dive.startX));
-                return dive.startX + limitedDx;
-              };
-              const desiredStrike = clampBatX(e, playerX, bounds, false);
-              if (!Number.isFinite(dive.strikeX)) dive.strikeX = desiredStrike;
-              const strikeBlend = Math.max(0.08, Math.min(0.5, chaseFactor * (1 - t * 0.3)));
-              const strikeNext = dive.strikeX + (desiredStrike - dive.strikeX) * strikeBlend;
-              dive.strikeX = clampBatX(e, applyFollowLimit(strikeNext), bounds, false);
-              const minSpan = dive.minHorizontal ?? 0;
-              const strikeSpan = Math.abs(dive.strikeX - dive.startX);
-              if (minSpan > 0.001 && strikeSpan < minSpan * 0.6) {
-                const dir = dive.preferDir || (desiredStrike >= dive.startX ? 1 : -1) || (playerX >= dive.startX ? 1 : -1) || 1;
-                const forcedStrike = dive.startX + dir * Math.min(minSpan * 0.75, minSpan);
-                dive.strikeX = clampBatX(e, applyFollowLimit(forcedStrike), bounds, false);
-              } else if (strikeSpan >= minSpan * 0.75) {
-                dive.preferDir = dive.strikeX >= dive.startX ? 1 : -1;
-              }
-
-              let desiredTarget = dive.strikeX + (dive.anchorOffset ?? 0);
-              desiredTarget = clampBatX(e, applyFollowLimit(desiredTarget), bounds, false);
-              const blend = Math.max(0.06, Math.min(0.35, chaseFactor * (1 - t * 0.5)));
-              const nextTarget = dive.targetX + (desiredTarget - dive.targetX) * blend;
-              const clampedNext = clampBatX(e, applyFollowLimit(nextTarget), bounds, false);
-              dive.targetX = clampedNext;
-              dive.anchorOffset = dive.targetX - dive.strikeX;
-
-              if (minSpan > 0.001) {
-                const span = Math.abs(dive.targetX - dive.startX);
-                if (span < minSpan * 0.8) {
-                  const dir = dive.preferDir || (dive.targetX >= dive.startX ? 1 : -1) || (playerX >= dive.startX ? 1 : -1) || 1;
-                  let forcedTarget = dive.startX + dir * minSpan;
-                  forcedTarget = clampBatX(e, applyFollowLimit(forcedTarget), bounds, false);
-                  if (Math.abs(forcedTarget - dive.startX) > span) {
-                    dive.targetX = forcedTarget;
-                    dive.anchorOffset = dive.targetX - dive.strikeX;
-                  }
-                }
-              }
-
-              const baseWaveMag = dive.waveBase ?? (attackDef.waveAmp ?? 0.78);
-              const minWave = dive.minWave ?? (attackDef.minWave ?? baseWaveMag * 0.6);
-              const maxWave = dive.maxWave ?? (attackDef.maxWave ?? baseWaveMag * 1.6);
-              const spanNow = Math.abs(dive.targetX - dive.startX);
-              const desiredWave = Math.max(minWave, Math.min(maxWave, spanNow * 0.55 + baseWaveMag * 0.3));
-              const currentWave = Number.isFinite(dive.waveAmp) ? dive.waveAmp : desiredWave;
-              dive.waveAmp = currentWave + (desiredWave - currentWave) * 0.35;
-              if (dive.waveAmp < minWave) dive.waveAmp = minWave;
-              else if (dive.waveAmp > maxWave) dive.waveAmp = maxWave;
-
-              const aimX = Math.abs((dive.strikeX ?? dive.targetX) - e.x) > 0.02 ? (dive.strikeX ?? dive.targetX) : dive.targetX;
-              const waveAim = aimX - e.x;
-              if (Math.abs(waveAim) > 0.02) {
-                dive.waveDir = waveAim > 0 ? 1 : -1;
-              } else {
-                dive.waveDir = playerX >= e.x ? 1 : -1;
-              }
-            }
-            const ease = t * t;
-            const prevX = e.x;
-            const baseX = dive.startX + (dive.targetX - dive.startX) * ease;
-            const waveAmp = dive.waveAmp ?? 0;
-            const waveDir = dive.waveDir ?? (dive.targetX >= dive.startX ? 1 : -1);
-            const wave = Math.sin(t * Math.PI) * waveAmp * (waveDir || 1);
-            e.x = clampBatX(e, baseX + wave, bounds);
-            const dropCurve = ease;
-            e.y = dive.startY + (dive.targetY - dive.startY) * dropCurve;
-            const minCenter = centerFromFoot(e, -0.1);
-            if (e.y < minCenter) e.y = minCenter;
-            e.facing = e.x >= prevX ? 1 : -1;
-            if (attackDef && !e.attackDidSpawn) {
-              const timeReady = e.attackHitAt && now >= e.attackHitAt;
-              const toleranceX = e.sizeUnits * 0.56;
-              const toleranceY = e.sizeUnits * 0.72;
-              const closeToPlayer = Math.abs(e.x - playerX) <= toleranceX;
-              const alignedY = Math.abs(e.y - playerY) <= toleranceY;
-              if (timeReady || (t >= Math.min(0.98, dive.hitFrac ?? 0.82)) || (closeToPlayer && alignedY)) {
-                spawnBatHitbox(e, attackDef);
-                e.attackDidSpawn = true;
-              }
-            }
-            if (t >= 1) {
-              e.state = 'rebound';
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              const orbit = e.orbitOffset ?? 2.8;
-              const sidePref = dive.waveDir ?? (playerX >= e.x ? 1 : -1);
-              const side = sidePref >= 0 ? 1 : -1;
-              const jitter = (Math.random() - 0.5) * Math.min(orbit * 0.6, 1.4);
-              const offset = side * orbit + jitter;
-              const hoverY = centerFromFoot(e, e.hover + 0.2);
-              const targetX = clampBatX(e, playerX + offset, bounds, false);
-              e.reboundTarget.x = targetX;
-              e.reboundTarget.y = hoverY;
-              e.rebound = {
-                startTime: now,
-                duration: 420,
-                startX: e.x,
-                startY: e.y,
-                targetX,
-                targetY: hoverY
-              };
-              e.dive = null;
-              e.vx = 0;
-              e.vy = 0;
-            }
-            break;
-          }
-          case 'rebound': {
-            const rebound = e.rebound;
-            if (!rebound) {
-              e.state = 'fly';
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              e.vx = 0;
-              e.vy = 0;
-              break;
-            }
-            const duration = rebound.duration ?? 420;
-            const elapsed = now - rebound.startTime;
-            const t = duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 1;
-            const ease = 1 - Math.pow(1 - t, 2);
-            const targetX = rebound.targetX ?? e.reboundTarget?.x ?? e.x;
-            const targetY = rebound.targetY ?? e.reboundTarget?.y ?? e.y;
-            const prevX = e.x;
-            e.x = rebound.startX + (targetX - rebound.startX) * ease;
-            e.y = rebound.startY + (targetY - rebound.startY) * ease;
-            const bounds = getBatHorizontalBounds(e);
-            e.x = clampBatX(e, e.x, bounds);
-            const minCenter = centerFromFoot(e, -0.1);
-            if (e.y < minCenter) e.y = minCenter;
-            e.facing = e.x >= prevX ? 1 : -1;
-            if (t >= 1) {
-              e.state = 'fly';
-              e.awakened = true;
-              if (e.mgr.fly) setEnemyAnim(e, 'fly');
-              e.rebound = null;
-              e.vx = 0;
-              e.vy = 0;
-              const engageRangeX = e.engageRangeX ?? 6.2;
-              const engageRangeY = e.engageRangeY ?? 3.4;
-              const dropRange = e.disengageRangeX ?? 7.8;
-              const horizontalHomeNow = Math.abs(playerX - e.homeX);
-              const horizontalBatNow = Math.abs(playerX - e.x);
-              const verticalBatNow = Math.abs(playerY - e.y);
-              const withinDetection = verticalBatNow <= engageRangeY && (horizontalHomeNow <= engageRangeX || horizontalBatNow <= engageRangeX);
-              if (withinDetection) {
-                if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
-                e.nextAttackAt = Math.max(now + 340, e.nextAttackAt);
-              } else if (horizontalHomeNow <= dropRange) {
-                e.comboRemaining = 0;
-                e.nextAttackAt = Math.max(now + 720, e.nextAttackAt);
-              } else {
-                e.comboRemaining = 0;
-                e.nextAttackAt = Math.max(now + 900, e.nextAttackAt);
-              }
-            }
-            break;
-          }
-          case 'stagger': {
-            e.vx = 0;
-            e.vy = 0;
-            break;
-          }
-          case 'hit': {
-            e.vx = 0;
-            e.vy = 0;
-            break;
-          }
-          default:
-            break;
         }
-
         if (e.sprite) {
           e.sprite.position.x = e.x;
           e.sprite.position.y = e.y;
           e.sprite.invertU = (e.facing < 0);
         }
       }
-
       function updateEnemies(dt) {
         assignWolfPackRoles();
         enemies.forEach(e => {
