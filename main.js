@@ -1882,113 +1882,6 @@
         return value;
       }
 
-      function startBatDive(e, now, playerX, playerY) {
-        const attackDef = BAT_ATTACK_DATA.dive;
-        if (!attackDef) return false;
-        const bounds = getBatHorizontalBounds(e);
-        const startX = e.x;
-        const startY = e.y;
-        const followX = attackDef.followX ?? 4.6;
-        const followY = attackDef.followY ?? 3.2;
-        const limitedDx = Math.max(-followX, Math.min(followX, playerX - startX));
-        let targetX = startX + limitedDx;
-        targetX = clampBatX(e, targetX, bounds);
-        const floorCenter = centerFromFoot(e, -0.08);
-        const maxDrop = Math.max(0.25, Math.min(followY, startY - floorCenter));
-        let drop = startY - Math.min(playerY, startY - 0.2);
-        if (!Number.isFinite(drop) || drop <= 0.15) drop = 0.3;
-        drop = Math.min(drop, maxDrop);
-        drop = Math.max(Math.min(maxDrop, 0.25), drop);
-        let targetY = startY - drop;
-        if (targetY < floorCenter) targetY = floorCenter;
-        const travelMs = attackDef.travelMs ?? 520;
-        const hitFrac = Math.max(0.55, Math.min(0.92, attackDef.hitFrac ?? 0.78));
-        const waveBase = attackDef.waveAmp ?? 0.78;
-        const horizontalSpan = Math.abs(targetX - startX);
-        const waveAmp = Math.min(waveBase * 1.6, Math.max(waveBase * 0.45, horizontalSpan * 0.55 + 0.12));
-        const waveDir = (targetX >= startX) ? 1 : -1;
-        e.state = 'attack';
-        e.attackDidSpawn = false;
-        e.dive = {
-          startTime: now,
-          duration: travelMs,
-          startX,
-          startY,
-          targetX,
-          targetY,
-          waveAmp,
-          waveDir,
-          hitFrac
-        };
-        e.rebound = null;
-        e.attackHitAt = now + travelMs * hitFrac;
-        e.attackEndAt = now + travelMs;
-        e.nextAttackAt = now + (attackDef.cooldownMs ?? 900);
-        e.vx = 0;
-        e.vy = 0;
-        e.facing = waveDir >= 0 ? 1 : -1;
-        if (e.mgr.attack) setEnemyAnim(e, attackDef.anim || 'attack');
-        e.comboRemaining = Math.max(0, e.comboRemaining - 1);
-        return true;
-      }
-
-      function getBatHorizontalBounds(e) {
-        const engage = e.engageRangeX;
-        let clampMin = Number.isFinite(e.patrolMin) ? e.patrolMin : (e.homeX - 3);
-        let clampMax = Number.isFinite(e.patrolMax) ? e.patrolMax : (e.homeX + 3);
-        if (Number.isFinite(engage)) {
-          const detectMin = e.homeX - engage;
-          const detectMax = e.homeX + engage;
-          clampMin = Math.min(clampMin, detectMin);
-          clampMax = Math.max(clampMax, detectMax);
-        }
-        if (!Number.isFinite(clampMin)) clampMin = e.homeX - 3;
-        if (!Number.isFinite(clampMax)) clampMax = e.homeX + 3;
-        if (clampMax < clampMin) {
-          const mid = e.homeX || 0;
-          clampMin = Math.min(clampMin, mid);
-          clampMax = Math.max(clampMax, mid);
-        }
-        return { min: clampMin, max: clampMax };
-      }
-
-      function getBatHorizontalBounds(e) {
-        const engage = e.engageRangeX;
-        let clampMin = Number.isFinite(e.patrolMin) ? e.patrolMin : (e.homeX - 3);
-        let clampMax = Number.isFinite(e.patrolMax) ? e.patrolMax : (e.homeX + 3);
-        if (Number.isFinite(engage)) {
-          const detectMin = e.homeX - engage;
-          const detectMax = e.homeX + engage;
-          clampMin = Math.min(clampMin, detectMin);
-          clampMax = Math.max(clampMax, detectMax);
-        }
-        if (!Number.isFinite(clampMin)) clampMin = e.homeX - 3;
-        if (!Number.isFinite(clampMax)) clampMax = e.homeX + 3;
-        if (clampMax < clampMin) {
-          const mid = e.homeX || 0;
-          clampMin = Math.min(clampMin, mid);
-          clampMax = Math.max(clampMax, mid);
-        }
-        return { min: clampMin, max: clampMax };
-      }
-
-      function clampBatX(e, value, bounds = getBatHorizontalBounds(e), usePad = true) {
-        const clampMin = bounds?.min;
-        const clampMax = bounds?.max;
-        if (Number.isFinite(clampMin) && Number.isFinite(clampMax)) {
-          if (clampMax <= clampMin) return clampMin;
-          if (!usePad) return Math.max(clampMin, Math.min(clampMax, value));
-          const edgePad = Math.max(0.18, e.sizeUnits * 0.22);
-          const innerMin = clampMin + edgePad;
-          const innerMax = clampMax - edgePad;
-          if (innerMax <= innerMin) {
-            return Math.max(clampMin, Math.min(clampMax, value));
-          }
-          return Math.max(innerMin, Math.min(innerMax, value));
-        }
-        return value;
-      }
-
       const BAT_BASE_CONFIG = {
         detectionRadius: 6,
         verticalLeeway: 3.6,
@@ -2222,6 +2115,10 @@
         await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
         await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
         await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
+        const runBaseline = e.baselines?.run;
+        if (runBaseline != null) {
+          e.baselineUnits = runBaseline;
+        }
         e.y = centerFromFoot(e, footY);
         e.nextComboAt = performance.now() + 600;
         setEnemyAnim(e, 'run');
@@ -2381,6 +2278,10 @@
         await loadEnemySheet(e, 'attack', 'assets/sprites/bat/Attack.png', 12, false, true);
         await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
         await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
+        const sleepBaseline = e.baselines?.sleep;
+        if (sleepBaseline != null) {
+          e.baselineUnits = sleepBaseline;
+        }
         e.y = centerFromFoot(e, footY);
         e.reboundTarget.y = e.y;
         e.nextAttackAt = performance.now() + 800;
@@ -2709,6 +2610,7 @@
         const playerSpritePos = playerSprite.sprite?.position;
         const playerX = playerSpritePos?.x ?? 0;
         const playerY = playerSpritePos?.y ?? 0;
+
         const cfg = getBatConfig(e);
         const bounds = getBatHorizontalBounds(e);
         const dx = playerX - e.x;
@@ -2758,7 +2660,6 @@
           e.awakened = true;
           if (e.mgr.fly) setEnemyAnim(e, 'fly');
         }
-
         switch (e.state) {
           case 'sleep': {
             if (e.awakened) {
