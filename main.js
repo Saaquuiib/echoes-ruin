@@ -1044,14 +1044,16 @@
       const mgr = playerSprite.mgr[name]; if (!mgr) return;
 
       const old = playerSprite.sprite;
-      const pos = old.position.clone();         // keep current Y (air)
+      const pos = old.position.clone();         // keep current transform
+      const prevSizeUnits = playerSprite.sizeUnits;
+      const prevFeetCenter = (prevSizeUnits * 0.5) - playerSprite.baselineUnits;
       const facingLeft = (state.facing < 0);
       old.dispose();
 
       const sp = new BABYLON.Sprite('playerSprite', mgr);
       const sizeUnits = playerSprite.sizeByAnim[name] ?? playerSprite.sizeUnits;
       sp.size = sizeUnits;
-      sp.position = new BABYLON.Vector3(pos.x, pos.y, 0);
+      sp.position = new BABYLON.Vector3(pos.x, pos.y, pos.z ?? 0);
       sp.invertU = facingLeft;
       const loop = (typeof loopOverride === 'boolean') ? loopOverride : !!meta.loop;
       const shouldPlay = opts.play !== false;
@@ -1073,6 +1075,16 @@
         playerSprite.animDurationMs = opts.manualDuration;
       } else {
         playerSprite.animDurationMs = shouldPlay ? (meta.frames / meta.fps) * 1000 : 0;
+      }
+
+      if (state.onGround) {
+        const newFeetCenter = feetCenterY();
+        const delta = newFeetCenter - prevFeetCenter;
+        if (Math.abs(delta) > 0.0001) {
+          placeholder.position.y += delta;
+          sp.position.y += delta;
+          if (state.vy < 0) state.vy = 0;
+        }
       }
     }
 
