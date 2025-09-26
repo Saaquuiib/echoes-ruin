@@ -1557,11 +1557,10 @@
       };
 
       const BAT_ATTACK_DATA = {
-        dive: {
+        contact: {
           anim: 'attack',
           hitFrac: 0.45,
           durationMs: 160,
-          travelMs: 520,
           damage: 9,
           poise: 9,
           width: e => e.sizeUnits * 0.66,
@@ -1575,9 +1574,14 @@
       const BAT_AGGRO_HYSTERESIS = 1;
       const BAT_LEASH_RADIUS = 11;
       const BAT_VIEW_MARGIN = 0.5;
-      const BAT_MELEE_RANGE = 0.95;
-      const BAT_DIVE_COOLDOWN_MS = 1200;
       const BAT_ATTACK_ACTIVE_FRAMES = { start: 3, end: 7 };
+      const BAT_ATTACK_COOLDOWN_MS = 900;
+      const BAT_FOLLOW_SPEED = 2.4;
+      const BAT_FOLLOW_ACCEL = 9;
+      const BAT_RETURN_SPEED = 1.6;
+      const BAT_RETURN_ACCEL = 6;
+      const BAT_STOOP_IN_RATE = 1.6;   // how quickly the bat drops toward chest height when aggroed
+      const BAT_STOOP_OUT_RATE = 2.0;  // how quickly it eases back to an idle hover height
 
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
@@ -1751,7 +1755,7 @@
           poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
           getOrigin,
           getFacing: () => e.facing,
-          meta: { enemy: 'bat', attack: 'dive' },
+          meta: { enemy: 'bat', attack: 'contact' },
           onHit,
           onExpire
         });
@@ -1881,7 +1885,8 @@
         e.vy = 0;
         e.deathAt = e.deathAt || now;
         e.fadeStartAt = e.fadeStartAt || (e.deathAt + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS));
-        e.attackPath = null;
+        e.attackStartedAt = 0;
+        e.attackDidDamage = false;
         if (e.mgr.dead) setEnemyAnim(e, 'dead');
       }
     async function spawnWolf(x, footY, minX, maxX) {
@@ -2033,9 +2038,8 @@
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
           hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
-          comboRemaining: 0, nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
-          attackPath: null, reboundTarget: { x, y: 0 },
-          attackHitbox: null, attackHitLanded: false,
+          nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
+          attackHitbox: null, attackDidDamage: false, attackStartedAt: 0,
           homeX: x, hitReactUntil: 0,
           awakened: false,
           staggered: false, staggerUntil: 0,
@@ -2046,11 +2050,11 @@
           dead: false, combat: null, hurtbox: null,
           anchor: { x, y: 0 },
           spawnAnchor: { x, y: 0 },
-          idleHoverX: x,
           aggro: false,
           desiredAnimName: '', desiredAnimOpts: null, desiredAnimForce: false,
           animLockUntil: 0, animLockName: null,
-          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false
+          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false,
+          stoopProgress: 0
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
@@ -2059,12 +2063,10 @@
         await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
         await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
-        e.reboundTarget.y = e.y;
         e.anchor.x = e.x;
         e.anchor.y = e.y;
         e.spawnAnchor.x = e.x;
         e.spawnAnchor.y = e.y;
-        e.idleHoverX = e.x;
         e.nextAttackAt = performance.now() + 800;
         setEnemyAnim(e, 'sleep');
         const box = BABYLON.MeshBuilder.CreateBox(`dbg_${e.type}`, { width: e.sizeUnits, height: e.sizeUnits, depth: 0.01 }, scene);
@@ -2107,6 +2109,8 @@
               e.attackHitbox = null;
             }
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
+            e.attackDidDamage = false;
+            e.attackStartedAt = 0;
           },
           onStagger: () => {
             const now = performance.now();
@@ -2114,16 +2118,16 @@
             e.staggerUntil = combatActor.staggeredUntil;
             e.state = 'stagger';
             e.vx = 0; e.vy = 0;
-            e.comboRemaining = 0;
             e.animLockUntil = combatActor.staggeredUntil;
             e.animLockName = 'hit';
             if (e.mgr.hit) setEnemyAnim(e, 'hit', { preserveAnchor: true, force: true });
-            e.attackPath = null;
             if (e.attackHitbox) {
               e.attackHitbox.markRemove = true;
               e.attackHitbox = null;
             }
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 720);
+            e.attackDidDamage = false;
+            e.attackStartedAt = 0;
           },
           onStaggerEnd: ({ now }) => {
             e.staggered = false;
@@ -2134,7 +2138,8 @@
             e.animLockName = null;
             if (e.mgr.fly) setEnemyAnim(e, 'fly', { preserveAnchor: true, force: true });
             e.nextAttackAt = now + 520;
-            e.comboRemaining = Math.max(1, (Math.random() < 0.6 ? 2 : 1));
+            e.attackDidDamage = false;
+            e.attackStartedAt = 0;
           },
           onDeath: () => {
             if (e.dead || e.dying) return;
@@ -2142,8 +2147,6 @@
             e.dying = true;
             e.deathAt = now;
             e.fadeStartAt = now + (e.fadeDelayMs ?? ENEMY_FADE_DELAY_MS);
-            e.comboRemaining = 0;
-            e.attackPath = null;
             if (e.attackHitbox) {
               e.attackHitbox.markRemove = true;
               e.attackHitbox = null;
@@ -2155,6 +2158,8 @@
             e.pendingLandingState = { type: 'dead' };
             e.vx = 0;
             e.vy = -1.2;
+            e.attackStartedAt = 0;
+            e.attackDidDamage = false;
           }
         });
         const hb = Combat.registerHurtbox(combatActor, {
@@ -2395,7 +2400,7 @@
       }
 
       function batShouldPreserveAnchor(state) {
-        return state === 'fly' || state === 'attack' || state === 'rebound' || state === 'stagger' || state === 'hit';
+        return state === 'fly' || state === 'attack' || state === 'stagger' || state === 'hit';
       }
 
       function batSetDesiredAnim(e, name, opts = {}) {
@@ -2430,18 +2435,52 @@
         e.desiredAnimForce = false;
       }
 
-      function getBatDiveSocketPosition(e, now = performance.now()) {
-        const path = e.attackPath;
-        if (!path) return { x: e.x, y: e.y };
-        const meta = e.mgr?.attack;
-        const animDuration = path.animDuration || (meta ? ((meta.frames / meta.fps) * 1000) : path.duration || 0);
-        const animStart = path.animStart ?? path.startTime ?? now;
-        const elapsed = Math.max(0, now - animStart);
-        const animT = animDuration > 0 ? Math.min(1, elapsed / animDuration) : 0;
-        const facing = e.facing >= 0 ? 1 : -1;
-        const forward = e.sizeUnits * (0.22 + 0.24 * animT);
-        const vertical = -e.sizeUnits * (0.1 + 0.18 * Math.sin(animT * Math.PI));
-        return { x: e.x + forward * facing, y: e.y + vertical };
+      function computeHurtboxShape(box) {
+        if (!box || !box.actor) return null;
+        const actor = box.actor;
+        const originFn = box.getOrigin || actor.getOrigin;
+        const facingFn = box.getFacing || actor.getFacing;
+        const origin = originFn ? originFn(actor) : { x: 0, y: 0 };
+        const facing = box.mirror === false ? 1 : (facingFn ? facingFn(actor) : 1);
+        const offsetX = (box.offset?.x || 0) * (box.absolute ? 1 : facing);
+        const offsetY = box.offset?.y || 0;
+        const center = { x: origin.x + offsetX, y: origin.y + offsetY };
+        if (box.shape === 'circle') {
+          const radius = Math.max(0, box.radius || 0);
+          return { type: 'circle', center, radius };
+        }
+        const width = Math.max(0, box.width || 0);
+        const height = Math.max(0, box.height || 0);
+        return {
+          type: 'rect',
+          center,
+          width,
+          height,
+          minX: center.x - width * 0.5,
+          maxX: center.x + width * 0.5,
+          minY: center.y - height * 0.5,
+          maxY: center.y + height * 0.5
+        };
+      }
+
+      function hurtShapesOverlap(a, b) {
+        if (!a || !b) return false;
+        if (a.type === 'rect' && b.type === 'rect') {
+          return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+        }
+        if (a.type === 'circle' && b.type === 'circle') {
+          const dx = a.center.x - b.center.x;
+          const dy = a.center.y - b.center.y;
+          const r = a.radius + b.radius;
+          return (dx * dx + dy * dy) <= r * r;
+        }
+        const rect = a.type === 'rect' ? a : b;
+        const circle = a.type === 'circle' ? a : b;
+        const clampedX = Math.max(rect.minX, Math.min(circle.center.x, rect.maxX));
+        const clampedY = Math.max(rect.minY, Math.min(circle.center.y, rect.maxY));
+        const dx = circle.center.x - clampedX;
+        const dy = circle.center.y - clampedY;
+        return (dx * dx + dy * dy) <= circle.radius * circle.radius;
       }
 
       function updateBat(e, dt) {
@@ -2452,8 +2491,12 @@
         const playerX = playerSpritePos?.x ?? 0;
         const playerY = playerSpritePos?.y ?? 0;
         const dx = playerX - e.x;
-        const dy = playerY - e.y;
-        const dist = Math.hypot(dx, dy);
+        const heroSize = playerSprite.sizeUnits ?? 0;
+        const heroBaseline = playerSprite.baselineUnits ?? 0;
+        const heroFeetY = playerY - (heroSize * 0.5) + heroBaseline;
+        const heroHeadY = heroFeetY + heroSize;
+        const heroChestY = heroFeetY + heroSize * HERO_TORSO_FRAC;
+        const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
         if (e.dead) {
           if (e.sprite) {
             e.sprite.position.x = e.x;
@@ -2492,29 +2535,27 @@
           playerX <= viewBounds.right + BAT_VIEW_MARGIN &&
           playerY >= viewBounds.bottom - BAT_VIEW_MARGIN &&
           playerY <= viewBounds.top + BAT_VIEW_MARGIN;
-        const spawnDist = Math.hypot(playerX - e.spawnAnchor.x, playerY - e.spawnAnchor.y);
+        const heroFromSpawn = Math.hypot(playerX - e.spawnAnchor.x, playerY - e.spawnAnchor.y);
         const releaseDist = BAT_AGGRO_RADIUS + BAT_AGGRO_HYSTERESIS;
-        const shouldAggro = playerInView && dist <= BAT_AGGRO_RADIUS;
+        const shouldAggro = playerInView && detectionDist <= BAT_AGGRO_RADIUS;
         if (shouldAggro) {
           e.aggro = true;
           e.awakened = true;
         }
-        const leashBreak = spawnDist > BAT_LEASH_RADIUS;
-        if (e.aggro && (dist > releaseDist || !playerInView || leashBreak)) {
+        const leashBreak = heroFromSpawn > BAT_LEASH_RADIUS;
+        if (e.aggro && (detectionDist > releaseDist || !playerInView || leashBreak)) {
           e.aggro = false;
-          e.idleHoverX = e.x;
-          e.comboRemaining = 0;
-          e.nextAttackAt = Math.max(e.nextAttackAt, now + 600);
-          if (e.state === 'attack') {
-            e.state = 'rebound';
-            e.reboundTarget.x = e.x;
-            e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
-            e.attackPath = null;
-          }
+          e.nextAttackAt = Math.max(e.nextAttackAt, now + BAT_ATTACK_COOLDOWN_MS);
           if (e.attackHitbox) {
             e.attackHitbox.markRemove = true;
             e.attackHitbox = null;
           }
+        }
+
+        if (e.aggro) {
+          e.stoopProgress = Math.min(1, (e.stoopProgress ?? 0) + dt * BAT_STOOP_IN_RATE);
+        } else {
+          e.stoopProgress = Math.max(0, (e.stoopProgress ?? 0) - dt * BAT_STOOP_OUT_RATE);
         }
 
         if (e.hitReactUntil && now >= e.hitReactUntil) {
@@ -2542,7 +2583,6 @@
             if (now >= (e.animStart + e.animDur - 1)) {
               e.state = 'fly';
               e.awakened = true;
-              if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
               e.nextAttackAt = now + 420;
               batSetDesiredAnim(e, 'fly', { force: true });
             }
@@ -2551,165 +2591,129 @@
           case 'fly': {
             batSetDesiredAnim(e, 'fly');
             e.bob += dt * 2.2;
+            const baseClampMin = e.patrolMin ?? (e.homeX - 3);
+            const baseClampMax = e.patrolMax ?? (e.homeX + 3);
+            const leashClampMin = e.spawnAnchor.x - (BAT_LEASH_RADIUS - 0.25);
+            const leashClampMax = e.spawnAnchor.x + (BAT_LEASH_RADIUS - 0.25);
+            const clampMin = e.aggro ? leashClampMin : baseClampMin;
+            const clampMax = e.aggro ? leashClampMax : baseClampMax;
+            const minCenter = centerFromFoot(e, -0.1);
+            let targetX = e.x;
+            let targetY = e.y;
             const hover = e.hover + Math.sin(e.bob) * 0.35;
-            e.y = centerFromFoot(e, hover);
-            const clampMin = e.patrolMin ?? (e.homeX - 3);
-            const clampMax = e.patrolMax ?? (e.homeX + 3);
-            let targetX;
+            const idleHoverY = Math.max(centerFromFoot(e, hover), heroHeadY + 0.5);
+            const pursuitCeilingY = Math.max(minCenter, heroHeadY + 0.5);
+            const chestAimY = Math.max(minCenter, heroChestY);
+            const stoopT = Math.max(0, Math.min(1, e.stoopProgress ?? 0));
+            const stoopEase = stoopT * stoopT * (3 - 2 * stoopT);
             if (e.aggro) {
-              const offset = dx >= 0 ? -0.6 : 0.6;
-              targetX = Math.max(clampMin, Math.min(clampMax, playerX + offset));
+              targetX = Math.max(clampMin, Math.min(clampMax, playerX));
+              const pursuitY = pursuitCeilingY + (chestAimY - pursuitCeilingY) * stoopEase;
+              const bob = Math.sin(e.bob * 0.8) * 0.08;
+              targetY = Math.max(minCenter, pursuitY + bob);
             } else {
-              targetX = Math.max(clampMin, Math.min(clampMax, e.idleHoverX));
+              targetX = Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
+              const idleY = Math.max(minCenter, idleHoverY);
+              targetY = Math.max(minCenter, idleY);
             }
-            const diff = targetX - e.x;
-            const speed = e.aggro ? 1.8 : 1.1;
-            if (Math.abs(diff) > 0.05) {
-              e.vx = Math.sign(diff) * speed;
-              e.x += e.vx * dt;
-            } else {
-              e.vx = 0;
+            const toX = targetX - e.x;
+            const toY = targetY - e.y;
+            const targetDist = Math.hypot(toX, toY);
+            const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
+            let desiredVX = 0;
+            let desiredVY = 0;
+            if (targetDist > 0.01) {
+              desiredVX = (toX / targetDist) * maxSpeed;
+              desiredVY = (toY / targetDist) * maxSpeed;
             }
-            e.facing = diff >= 0 ? 1 : -1;
-            if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 3]);
-            const readyForDive = e.aggro && playerInView && now >= e.nextAttackAt && e.comboRemaining > 0;
-            if (readyForDive) {
-              const attackDef = BAT_ATTACK_DATA.dive;
-              const travelMs = attackDef.travelMs ?? 520;
-              const attackMeta = e.mgr.attack;
-              const animDuration = attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : travelMs;
+            const accel = e.aggro ? BAT_FOLLOW_ACCEL : BAT_RETURN_ACCEL;
+            const blend = Math.min(1, accel * dt);
+            e.vx += (desiredVX - e.vx) * blend;
+            e.vy += (desiredVY - e.vy) * blend;
+            e.x += e.vx * dt;
+            e.y += e.vy * dt;
+            const leashHardMin = e.spawnAnchor.x - BAT_LEASH_RADIUS;
+            const leashHardMax = e.spawnAnchor.x + BAT_LEASH_RADIUS;
+            if (e.x < leashHardMin) {
+              e.x = leashHardMin;
+              if (e.vx < 0) e.vx = 0;
+            } else if (e.x > leashHardMax) {
+              e.x = leashHardMax;
+              if (e.vx > 0) e.vx = 0;
+            }
+            if (e.y < minCenter) {
+              e.y = minCenter;
+              if (e.vy < 0) e.vy = 0;
+            }
+            if (Math.abs(e.vx) > 0.02) {
+              e.facing = e.vx >= 0 ? 1 : -1;
+            } else if (e.aggro && Math.abs(dx) > 0.02) {
+              e.facing = dx >= 0 ? 1 : -1;
+            }
+            const batHurt = computeHurtboxShape(e.hurtbox);
+            const playerHurt = computeHurtboxShape(playerHurtbox);
+            const overlapping = e.aggro && now >= e.nextAttackAt && batHurt && playerHurt && hurtShapesOverlap(batHurt, playerHurt);
+            if (overlapping) {
               e.state = 'attack';
-              e.attackHitLanded = false;
+              e.attackStartedAt = now;
+              e.attackDidDamage = false;
               if (e.attackHitbox) {
                 e.attackHitbox.markRemove = true;
                 e.attackHitbox = null;
               }
-              e.comboRemaining -= 1;
-              const floorY = centerFromFoot(e, -0.25);
-              const aimX = playerX;
-              const aimY = Math.max(floorY, playerY + 0.1);
-              e.attackPath = {
-                startX: e.x,
-                startY: e.y,
-                targetX: aimX,
-                targetY: aimY,
-                startTime: now,
-                duration: travelMs,
-                animStart: now,
-                animDuration: animDuration
-              };
-              e.nextAttackAt = now + BAT_DIVE_COOLDOWN_MS;
+              e.nextAttackAt = now + BAT_ATTACK_COOLDOWN_MS;
               batSetDesiredAnim(e, 'attack', { force: true });
             }
             break;
           }
           case 'attack': {
             batSetDesiredAnim(e, 'attack');
-            const attackDef = BAT_ATTACK_DATA.dive;
-            const path = e.attackPath;
-            if (!path) {
-              e.state = 'rebound';
-              e.reboundTarget.x = e.x;
-              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
-              if (e.attackHitbox) {
-                e.attackHitbox.markRemove = true;
-                e.attackHitbox = null;
-              }
-              break;
-            }
-            const duration = path.duration ?? (attackDef.travelMs ?? 520);
-            const elapsed = now - path.startTime;
-            const tRaw = duration > 0 ? elapsed / duration : 1;
-            const t = Math.min(1, Math.max(0, tRaw));
-            const prevX = e.x;
-            const curve = Math.sin(Math.min(Math.PI * 0.5, t * Math.PI * 0.5));
-            e.x = path.startX + (path.targetX - path.startX) * t;
-            e.y = path.startY + (path.targetY - path.startY) * curve;
-            const minCenter = centerFromFoot(e, -0.1);
-            if (e.y < minCenter) e.y = minCenter;
-            e.facing = e.x >= prevX ? 1 : -1;
+            const attackDef = BAT_ATTACK_DATA.contact;
             const attackMeta = e.mgr.attack;
             const frames = attackMeta?.frames ?? 12;
-            const animDuration = path.animDuration || (attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : duration);
-            const animElapsed = now - (path.animStart ?? path.startTime);
-            const animT = animDuration > 0 ? Math.min(1, Math.max(0, animElapsed / animDuration)) : t;
+            const animDuration = attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : (attackDef.durationMs ?? 160);
+            if (!e.attackStartedAt) e.attackStartedAt = now;
+            const elapsed = Math.max(0, now - e.attackStartedAt);
+            const animT = animDuration > 0 ? Math.min(1, elapsed / animDuration) : 1;
             const frameFloat = frames > 0 ? animT * frames : 0;
             const frameIndex = Math.max(0, Math.min(frames - 1, Math.floor(frameFloat)));
             const inActiveWindow = frameIndex >= BAT_ATTACK_ACTIVE_FRAMES.start && frameIndex <= BAT_ATTACK_ACTIVE_FRAMES.end;
-            const socketPos = getBatDiveSocketPosition(e, now);
-            const socketDist = Math.hypot(playerX - socketPos.x, playerY - socketPos.y);
             const frameDuration = frames > 0 ? animDuration / frames : (attackDef.durationMs ?? 120);
-            if (!e.attackHitLanded && inActiveWindow && socketDist <= BAT_MELEE_RANGE) {
-              if (!e.attackHitbox) {
-                const remainingFrames = Math.max(1, BAT_ATTACK_ACTIVE_FRAMES.end - frameIndex + 1);
-                const durationMs = Math.max(attackDef.durationMs ?? 60, frameDuration * remainingFrames);
-                const hitbox = spawnBatHitbox(e, attackDef, {
-                  offset: { x: 0, y: 0 },
-                  durationMs,
-                  getOrigin: () => getBatDiveSocketPosition(e),
-                  onHit: () => {
-                    e.attackHitLanded = true;
-                    if (e.attackHitbox === hitbox) {
-                      e.attackHitbox.markRemove = true;
-                      e.attackHitbox = null;
-                    }
-                    e.nextAttackAt = Math.max(e.nextAttackAt, performance.now() + BAT_DIVE_COOLDOWN_MS);
-                  },
-                  onExpire: () => {
-                    if (e.attackHitbox === hitbox) {
-                      e.attackHitbox = null;
-                    }
+            e.vx += (0 - e.vx) * Math.min(1, 12 * dt);
+            e.vy += (0 - e.vy) * Math.min(1, 12 * dt);
+            if (Math.abs(dx) > 0.02) {
+              e.facing = dx >= 0 ? 1 : -1;
+            }
+            if (inActiveWindow && !e.attackHitbox && !e.attackDidDamage) {
+              const remainingFrames = Math.max(1, BAT_ATTACK_ACTIVE_FRAMES.end - frameIndex + 1);
+              const durationMs = Math.max(attackDef.durationMs ?? 60, frameDuration * remainingFrames);
+              const hitbox = spawnBatHitbox(e, attackDef, {
+                durationMs,
+                onHit: () => {
+                  e.attackDidDamage = true;
+                  if (e.attackHitbox === hitbox) {
+                    e.attackHitbox.markRemove = true;
+                    e.attackHitbox = null;
                   }
-                });
-                e.attackHitbox = hitbox;
-              }
-            } else if (e.attackHitbox && (!inActiveWindow || socketDist > BAT_MELEE_RANGE || e.attackHitLanded)) {
+                },
+                onExpire: () => {
+                  if (e.attackHitbox === hitbox) {
+                    e.attackHitbox = null;
+                  }
+                }
+              });
+              e.attackHitbox = hitbox;
+            } else if ((!inActiveWindow || e.attackDidDamage) && e.attackHitbox) {
               e.attackHitbox.markRemove = true;
               e.attackHitbox = null;
             }
-            if (t >= 1) {
-              if (!e.attackHitLanded) {
-                e.nextAttackAt = Math.max(e.nextAttackAt, now + BAT_DIVE_COOLDOWN_MS);
-              }
-              e.state = 'rebound';
-              const offset = (Math.random() - 0.5) * 2.2;
-              const clampMin = e.patrolMin ?? (e.homeX - 3);
-              const clampMax = e.patrolMax ?? (e.homeX + 3);
-              e.reboundTarget.x = Math.max(clampMin, Math.min(clampMax, playerX + offset));
-              e.reboundTarget.y = centerFromFoot(e, e.hover + 0.2);
-              e.attackPath = null;
+            if (animT >= 1) {
+              e.state = 'fly';
+              e.attackStartedAt = 0;
+              e.attackDidDamage = false;
               if (e.attackHitbox) {
                 e.attackHitbox.markRemove = true;
                 e.attackHitbox = null;
-              }
-            }
-            break;
-          }
-          case 'rebound': {
-            batSetDesiredAnim(e, 'fly');
-            const rx = e.reboundTarget.x - e.x;
-            const ry = e.reboundTarget.y - e.y;
-            const distR = Math.hypot(rx, ry);
-            const speed = 3.2;
-            if (distR > 0.08) {
-              e.vx = (rx / distR) * speed;
-              e.vy = (ry / distR) * speed;
-              e.x += e.vx * dt;
-              e.y += e.vy * dt;
-              e.facing = e.vx >= 0 ? 1 : -1;
-            } else {
-              e.x = e.reboundTarget.x;
-              e.y = e.reboundTarget.y;
-              if (e.aggro && playerInView) {
-                e.state = 'fly';
-                if (e.comboRemaining <= 0) e.comboRemaining = randChoice([1, 2, 2, 3]);
-                e.nextAttackAt = Math.max(now + 360, e.nextAttackAt);
-                batSetDesiredAnim(e, 'fly', { force: true });
-              } else {
-                e.state = 'fly';
-                e.nextAttackAt = Math.max(now + 720, e.nextAttackAt);
-                e.comboRemaining = 0;
-                batSetDesiredAnim(e, 'fly', { force: true });
               }
             }
             break;
@@ -2731,6 +2735,11 @@
         if (e.attackHitbox && e.state !== 'attack') {
           e.attackHitbox.markRemove = true;
           e.attackHitbox = null;
+        }
+
+        if (e.state !== 'attack') {
+          e.attackStartedAt = 0;
+          e.attackDidDamage = false;
         }
 
         if (e.anchor) {
