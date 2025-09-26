@@ -1580,6 +1580,8 @@
       const BAT_FOLLOW_ACCEL = 9;
       const BAT_RETURN_SPEED = 1.6;
       const BAT_RETURN_ACCEL = 6;
+      const BAT_STOOP_IN_RATE = 1.6;   // how quickly the bat drops toward chest height when aggroed
+      const BAT_STOOP_OUT_RATE = 2.0;  // how quickly it eases back to an idle hover height
 
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
@@ -2051,7 +2053,8 @@
           aggro: false,
           desiredAnimName: '', desiredAnimOpts: null, desiredAnimForce: false,
           animLockUntil: 0, animLockName: null,
-          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false
+          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false,
+          stoopProgress: 0
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
@@ -2549,6 +2552,12 @@
           }
         }
 
+        if (e.aggro) {
+          e.stoopProgress = Math.min(1, (e.stoopProgress ?? 0) + dt * BAT_STOOP_IN_RATE);
+        } else {
+          e.stoopProgress = Math.max(0, (e.stoopProgress ?? 0) - dt * BAT_STOOP_OUT_RATE);
+        }
+
         if (e.hitReactUntil && now >= e.hitReactUntil) {
           e.hitReactUntil = 0;
         }
@@ -2591,14 +2600,20 @@
             const minCenter = centerFromFoot(e, -0.1);
             let targetX = e.x;
             let targetY = e.y;
+            const hover = e.hover + Math.sin(e.bob) * 0.35;
+            const idleHoverY = Math.max(centerFromFoot(e, hover), heroHeadY + 0.5);
+            const pursuitCeilingY = Math.max(minCenter, heroHeadY + 0.5);
+            const chestAimY = Math.max(minCenter, heroChestY);
+            const stoopT = Math.max(0, Math.min(1, e.stoopProgress ?? 0));
+            const stoopEase = stoopT * stoopT * (3 - 2 * stoopT);
             if (e.aggro) {
               targetX = Math.max(clampMin, Math.min(clampMax, playerX));
-              const desiredY = Math.max(heroChestY, minCenter);
-              targetY = Math.max(minCenter, desiredY);
+              const pursuitY = pursuitCeilingY + (chestAimY - pursuitCeilingY) * stoopEase;
+              const bob = Math.sin(e.bob * 0.8) * 0.08;
+              targetY = Math.max(minCenter, pursuitY + bob);
             } else {
-              const hover = e.hover + Math.sin(e.bob) * 0.35;
               targetX = Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
-              const idleY = Math.max(centerFromFoot(e, hover), heroHeadY + 0.5);
+              const idleY = Math.max(minCenter, idleHoverY);
               targetY = Math.max(minCenter, idleY);
             }
             const toX = targetX - e.x;
@@ -2628,7 +2643,6 @@
             }
             if (e.y < minCenter) {
               e.y = minCenter;
-              if (e.vy < 0) e.vy = 0;
             }
             if (Math.abs(e.vx) > 0.02) {
               e.facing = e.vx >= 0 ? 1 : -1;
