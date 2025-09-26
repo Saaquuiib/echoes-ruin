@@ -1580,8 +1580,10 @@
       const BAT_FOLLOW_ACCEL = 9;
       const BAT_RETURN_SPEED = 1.6;
       const BAT_RETURN_ACCEL = 6;
-      const BAT_STOOP_IN_RATE = 1.6;   // how quickly the bat drops toward chest height when aggroed
-      const BAT_STOOP_OUT_RATE = 2.0;  // how quickly it eases back to an idle hover height
+      const BAT_FOLLOW_Y_OFFSET = 0.15;
+      const BAT_VERTICAL_MAX_SPEED = 3.0;
+      const BAT_VERTICAL_LERP = 0.12;
+      const BAT_REBOUND_MAX_ABOVE_HOVER = 0.6;
 
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
@@ -2494,8 +2496,7 @@
         const heroSize = playerSprite.sizeUnits ?? 0;
         const heroBaseline = playerSprite.baselineUnits ?? 0;
         const heroFeetY = playerY - (heroSize * 0.5) + heroBaseline;
-        const heroHeadY = heroFeetY + heroSize;
-        const heroChestY = heroFeetY + heroSize * HERO_TORSO_FRAC;
+        const heroCenterY = heroFeetY + heroSize * 0.5;
         const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
         if (e.dead) {
           if (e.sprite) {
@@ -2598,40 +2599,42 @@
             const clampMin = e.aggro ? leashClampMin : baseClampMin;
             const clampMax = e.aggro ? leashClampMax : baseClampMax;
             const minCenter = centerFromFoot(e, -0.1);
-            let targetX = e.x;
-            let targetY = e.y;
-            const hover = e.hover + Math.sin(e.bob) * 0.35;
-            const idleHoverY = Math.max(centerFromFoot(e, hover), heroHeadY + 0.5);
-            const pursuitCeilingY = Math.max(minCenter, heroHeadY + 0.5);
-            const chestAimY = Math.max(minCenter, heroChestY);
-            const stoopT = Math.max(0, Math.min(1, e.stoopProgress ?? 0));
-            const stoopEase = stoopT * stoopT * (3 - 2 * stoopT);
-            if (e.aggro) {
-              targetX = Math.max(clampMin, Math.min(clampMax, playerX));
-              const pursuitY = pursuitCeilingY + (chestAimY - pursuitCeilingY) * stoopEase;
-              const bob = Math.sin(e.bob * 0.8) * 0.08;
-              targetY = Math.max(minCenter, pursuitY + bob);
-            } else {
-              targetX = Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
-              const idleY = Math.max(minCenter, idleHoverY);
-              targetY = Math.max(minCenter, idleY);
-            }
+            const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
+            const bobValue = Math.sin(e.bob) * 0.35;
+            let targetX = e.aggro
+              ? Math.max(clampMin, Math.min(clampMax, playerX))
+              : Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
+            const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobValue)));
+            const pursuitAim = Math.max(minCenter, Math.min(maxCenter, heroCenterY + BAT_FOLLOW_Y_OFFSET));
+            const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, pursuitAim + bobValue * 0.25));
+            const desiredCenter = e.aggro ? pursuitCenter : idleCenter;
             const toX = targetX - e.x;
-            const toY = targetY - e.y;
-            const targetDist = Math.hypot(toX, toY);
             const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
             let desiredVX = 0;
-            let desiredVY = 0;
-            if (targetDist > 0.01) {
-              desiredVX = (toX / targetDist) * maxSpeed;
-              desiredVY = (toY / targetDist) * maxSpeed;
+            if (Math.abs(toX) > 0.01) {
+              desiredVX = (toX / Math.abs(toX)) * maxSpeed;
             }
             const accel = e.aggro ? BAT_FOLLOW_ACCEL : BAT_RETURN_ACCEL;
             const blend = Math.min(1, accel * dt);
             e.vx += (desiredVX - e.vx) * blend;
-            e.vy += (desiredVY - e.vy) * blend;
             e.x += e.vx * dt;
-            e.y += e.vy * dt;
+            const prevY = e.y;
+            if (e.aggro) {
+              const dy = desiredCenter - e.y;
+              const framesEquivalent = Math.max(0, dt * 60);
+              const lerpFactor = Math.max(0, Math.min(1, 1 - Math.pow(1 - BAT_VERTICAL_LERP, framesEquivalent)));
+              const desiredStep = dy * lerpFactor;
+              const maxStep = BAT_VERTICAL_MAX_SPEED * dt;
+              const step = Math.sign(desiredStep) * Math.min(Math.abs(desiredStep), maxStep);
+              e.y += step;
+            } else {
+              e.y = desiredCenter;
+            }
+            if (dt > 0) {
+              e.vy = (e.y - prevY) / dt;
+            } else {
+              e.vy = 0;
+            }
             const leashHardMin = e.spawnAnchor.x - BAT_LEASH_RADIUS;
             const leashHardMax = e.spawnAnchor.x + BAT_LEASH_RADIUS;
             if (e.x < leashHardMin) {
@@ -2643,6 +2646,10 @@
             }
             if (e.y < minCenter) {
               e.y = minCenter;
+              if (e.vy < 0) e.vy = 0;
+            } else if (e.y > maxCenter) {
+              e.y = maxCenter;
+              if (e.vy > 0) e.vy = 0;
             }
             if (Math.abs(e.vx) > 0.02) {
               e.facing = e.vx >= 0 ? 1 : -1;
@@ -2796,7 +2803,7 @@
 
       // spawn demo enemies
       spawnWolf(-4, 0, -6, -2);
-      spawnBat(4, 2.5, 3, 8);
+      spawnBat(4, 1.6, 3, 8);
 
       // === Actions ===
     function triggerParry() {
