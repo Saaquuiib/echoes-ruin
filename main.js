@@ -2643,7 +2643,6 @@
             }
             if (e.y < minCenter) {
               e.y = minCenter;
-              if (e.vy < 0) e.vy = 0;
             }
             if (Math.abs(e.vx) > 0.02) {
               e.facing = e.vx >= 0 ? 1 : -1;
