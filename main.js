@@ -1584,6 +1584,10 @@
       const BAT_VERTICAL_MAX_SPEED = 3.0;
       const BAT_VERTICAL_LERP = 0.12;
       const BAT_REBOUND_MAX_ABOVE_HOVER = 0.6;
+      const BAT_STOOP_IN_RATE = 3.6;
+      const BAT_STOOP_OUT_RATE = 1.5;
+      const BAT_STOOP_TARGET_FRAC = 0.82;
+      const BAT_STOOP_BOB_SCALE = 0.15;
 
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
@@ -2497,6 +2501,7 @@
         const heroBaseline = playerSprite.baselineUnits ?? 0;
         const heroFeetY = playerY - (heroSize * 0.5) + heroBaseline;
         const heroCenterY = heroFeetY + heroSize * 0.5;
+        const playerHurtShape = computeHurtboxShape(playerHurtbox);
         const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
         if (e.dead) {
           if (e.sprite) {
@@ -2601,13 +2606,20 @@
             const minCenter = centerFromFoot(e, -0.1);
             const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
             const bobValue = Math.sin(e.bob) * 0.35;
+            const stoopAmount = e.stoopProgress ?? 0;
             let targetX = e.aggro
               ? Math.max(clampMin, Math.min(clampMax, playerX))
               : Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
             const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobValue)));
-            const pursuitAim = Math.max(minCenter, Math.min(maxCenter, heroCenterY + BAT_FOLLOW_Y_OFFSET));
-            const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, pursuitAim + bobValue * 0.25));
-            const desiredCenter = e.aggro ? pursuitCenter : idleCenter;
+            const heroAimBase = playerHurtShape
+              ? playerHurtShape.minY + playerHurtShape.height * BAT_STOOP_TARGET_FRAC
+              : heroCenterY + BAT_FOLLOW_Y_OFFSET;
+            const pursuitAim = Math.max(minCenter, Math.min(maxCenter, heroAimBase));
+            const pursuitBob = bobValue * (1 - stoopAmount) * BAT_STOOP_BOB_SCALE;
+            const stoopCenter = Math.max(minCenter, Math.min(maxCenter, pursuitAim + pursuitBob));
+            const desiredCenter = e.aggro
+              ? idleCenter + (stoopCenter - idleCenter) * stoopAmount
+              : idleCenter;
             const toX = targetX - e.x;
             const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
             let desiredVX = 0;
@@ -2657,8 +2669,7 @@
               e.facing = dx >= 0 ? 1 : -1;
             }
             const batHurt = computeHurtboxShape(e.hurtbox);
-            const playerHurt = computeHurtboxShape(playerHurtbox);
-            const overlapping = e.aggro && now >= e.nextAttackAt && batHurt && playerHurt && hurtShapesOverlap(batHurt, playerHurt);
+            const overlapping = e.aggro && now >= e.nextAttackAt && batHurt && playerHurtShape && hurtShapesOverlap(batHurt, playerHurtShape);
             if (overlapping) {
               e.state = 'attack';
               e.attackStartedAt = now;
