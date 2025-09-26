@@ -2055,7 +2055,8 @@
           aggro: false,
           desiredAnimName: '', desiredAnimOpts: null, desiredAnimForce: false,
           animLockUntil: 0, animLockName: null,
-          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false
+          pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false,
+          stoopProgress: 0
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
@@ -2550,6 +2551,12 @@
             e.attackHitbox.markRemove = true;
             e.attackHitbox = null;
           }
+        }
+
+        if (e.aggro) {
+          e.stoopProgress = Math.min(1, (e.stoopProgress ?? 0) + dt * BAT_STOOP_IN_RATE);
+        } else {
+          e.stoopProgress = Math.max(0, (e.stoopProgress ?? 0) - dt * BAT_STOOP_OUT_RATE);
         }
 
         if (e.hitReactUntil && now >= e.hitReactUntil) {
