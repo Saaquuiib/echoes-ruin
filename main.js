@@ -2488,8 +2488,12 @@
         const playerX = playerSpritePos?.x ?? 0;
         const playerY = playerSpritePos?.y ?? 0;
         const dx = playerX - e.x;
-        const dy = playerY - e.y;
-        const dist = Math.hypot(dx, dy);
+        const heroSize = playerSprite.sizeUnits ?? 0;
+        const heroBaseline = playerSprite.baselineUnits ?? 0;
+        const heroFeetY = playerY - (heroSize * 0.5) + heroBaseline;
+        const heroHeadY = heroFeetY + heroSize;
+        const heroChestY = heroFeetY + heroSize * HERO_TORSO_FRAC;
+        const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
         if (e.dead) {
           if (e.sprite) {
             e.sprite.position.x = e.x;
@@ -2528,15 +2532,15 @@
           playerX <= viewBounds.right + BAT_VIEW_MARGIN &&
           playerY >= viewBounds.bottom - BAT_VIEW_MARGIN &&
           playerY <= viewBounds.top + BAT_VIEW_MARGIN;
-        const spawnDist = Math.hypot(playerX - e.spawnAnchor.x, playerY - e.spawnAnchor.y);
+        const heroFromSpawn = Math.hypot(playerX - e.spawnAnchor.x, playerY - e.spawnAnchor.y);
         const releaseDist = BAT_AGGRO_RADIUS + BAT_AGGRO_HYSTERESIS;
-        const shouldAggro = playerInView && dist <= BAT_AGGRO_RADIUS;
+        const shouldAggro = playerInView && detectionDist <= BAT_AGGRO_RADIUS;
         if (shouldAggro) {
           e.aggro = true;
           e.awakened = true;
         }
-        const leashBreak = spawnDist > BAT_LEASH_RADIUS;
-        if (e.aggro && (dist > releaseDist || !playerInView || leashBreak)) {
+        const leashBreak = heroFromSpawn > BAT_LEASH_RADIUS;
+        if (e.aggro && (detectionDist > releaseDist || !playerInView || leashBreak)) {
           e.aggro = false;
           e.nextAttackAt = Math.max(e.nextAttackAt, now + BAT_ATTACK_COOLDOWN_MS);
           if (e.attackHitbox) {
@@ -2578,19 +2582,24 @@
           case 'fly': {
             batSetDesiredAnim(e, 'fly');
             e.bob += dt * 2.2;
-            const clampMin = e.patrolMin ?? (e.homeX - 3);
-            const clampMax = e.patrolMax ?? (e.homeX + 3);
+            const baseClampMin = e.patrolMin ?? (e.homeX - 3);
+            const baseClampMax = e.patrolMax ?? (e.homeX + 3);
+            const leashClampMin = e.spawnAnchor.x - (BAT_LEASH_RADIUS - 0.25);
+            const leashClampMax = e.spawnAnchor.x + (BAT_LEASH_RADIUS - 0.25);
+            const clampMin = e.aggro ? leashClampMin : baseClampMin;
+            const clampMax = e.aggro ? leashClampMax : baseClampMax;
             const minCenter = centerFromFoot(e, -0.1);
             let targetX = e.x;
             let targetY = e.y;
             if (e.aggro) {
               targetX = Math.max(clampMin, Math.min(clampMax, playerX));
-              const desiredY = Math.max(playerY, minCenter);
+              const desiredY = Math.max(heroChestY, minCenter);
               targetY = Math.max(minCenter, desiredY);
             } else {
               const hover = e.hover + Math.sin(e.bob) * 0.35;
               targetX = Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
-              targetY = centerFromFoot(e, hover);
+              const idleY = Math.max(centerFromFoot(e, hover), heroHeadY + 0.5);
+              targetY = Math.max(minCenter, idleY);
             }
             const toX = targetX - e.x;
             const toY = targetY - e.y;
@@ -2608,6 +2617,15 @@
             e.vy += (desiredVY - e.vy) * blend;
             e.x += e.vx * dt;
             e.y += e.vy * dt;
+            const leashHardMin = e.spawnAnchor.x - BAT_LEASH_RADIUS;
+            const leashHardMax = e.spawnAnchor.x + BAT_LEASH_RADIUS;
+            if (e.x < leashHardMin) {
+              e.x = leashHardMin;
+              if (e.vx < 0) e.vx = 0;
+            } else if (e.x > leashHardMax) {
+              e.x = leashHardMax;
+              if (e.vx > 0) e.vx = 0;
+            }
             if (e.y < minCenter) {
               e.y = minCenter;
               if (e.vy < 0) e.vy = 0;
