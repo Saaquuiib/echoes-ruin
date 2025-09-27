@@ -1,5 +1,5 @@
 // Echoes of the Ruin — Phase 2.3.1
-// Fix: non-looping anims sticking; clean Parry(tap E) + Block(hold E)
+// Fix: non-looping anims sticking; input polish
 // Uses global BABYLON from CDN (no tooling)
 
 (() => {
@@ -7,13 +7,6 @@
   const PPU = 32;                       // pixels per world unit
   const FALLBACK_BASELINE_PX = 6;       // if pixel-read fails
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
-  const PARRY_WINDOW_MS = 120;          // parry window + parry anim duration
-  const PARRY_STAGGER_MS = 600;         // how long enemies stay stunned after a parry
-  const GUARD_BREAK_STUN_MS = 650;      // block break stun duration
-  const BLOCK_STAMINA_PER_DAMAGE = 1.0; // stamina drain ratio while blocking
-  const BLOCK_STAMINA_MIN_DRAIN = 6;    // ensure even light hits tax stamina
-  const BLOCK_DAMAGE_REDUCTION = 0.8;   // fraction of incoming HP mitigated while blocking
-  const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
   const HERO_TORSO_FRAC = 0.28;         // relative height (feet->head) where torso FX center should sit
@@ -606,10 +599,6 @@
       debugHurt: false, debugDie: false
     };
 
-    // Special handling for I (tap=parry, hold=block)
-    let eIsDown = false;
-    let blockTimer = null;
-
     const KeyMapDown = {
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
@@ -622,7 +611,7 @@
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
     };
-      const KeyMapUp = {
+    const KeyMapUp = {
       'KeyA': 'left', 'ArrowLeft': 'left',
       'KeyD': 'right', 'ArrowRight': 'right',
       'Space': 'jump', 'KeyL': 'roll',
@@ -635,18 +624,6 @@
     };
 
     window.addEventListener('keydown', e => {
-      if (e.code === 'KeyI') {
-        if (!eIsDown) {
-          eIsDown = true;
-          // start a one-shot timer; if still held after threshold, enter block
-          blockTimer = setTimeout(() => {
-            if (eIsDown && !state.acting && !state.dead && !state.blocking) {
-              startBlock();
-            }
-          }, HOLD_THRESHOLD_MS);
-        }
-        return;
-      }
       const k = KeyMapDown[e.code];
       if (!k || e.repeat) return;
       if (k === 'overlay') toggleOverlay();
@@ -667,16 +644,6 @@
     });
 
     window.addEventListener('keyup', e => {
-      if (e.code === 'KeyI') {
-        eIsDown = false;
-        if (blockTimer) { clearTimeout(blockTimer); blockTimer = null; }
-        if (state.blocking) {
-          stopBlock();
-        } else {
-          triggerParry(); // treat as a tap if block never engaged
-        }
-        return;
-      }
       const k = KeyMapUp[e.code]; if (!k) return;
       if (k === 'heavy') {
         releaseHeavyCharge();
@@ -714,16 +681,11 @@
       flaskEndAt: 0,
       flaskHealApplied: false,
 
-      // New
-      blocking: false,
-      parryOpen: false,
-      parryUntil: 0,
       climbing: false,
       landing: false,
       landingStartAt: 0,
       landingUntil: 0,
-      landingTriggeredAt: 0,
-      guardBrokenUntil: 0
+      landingTriggeredAt: 0
     };
 
     playerActor = Combat.registerActor({
@@ -751,18 +713,6 @@
           }
         }
 
-        if (state.parryOpen) {
-          if (now <= state.parryUntil) {
-            handleParrySuccess(event, now);
-            return;
-          }
-          state.parryOpen = false;
-        }
-
-        if (state.blocking && attackerIsInFront(event)) {
-          handleBlock(event, now);
-          return;
-        }
       },
       onHealthChange: (hp) => { setHP(hp); },
       onDamage: (event) => { triggerHurt(event.damage, { alreadyApplied: true, event }); },
@@ -826,9 +776,6 @@
       hurt:   { url: 'assets/sprites/player/Hurt.png',   frames: 3,  fps: 14, loop: false },
       death:  { url: 'assets/sprites/player/Death.png',  frames: 14, fps: 12, loop: false },
 
-      // Block + Parry
-      block:  { url: 'assets/sprites/player/Block.png',  frames: 1,  fps: 1,       loop: true  },
-      parry:  { url: 'assets/sprites/player/Parry.png',  frames: 2,  fps: 16.6667, loop: false } // 2f / 120ms
     };
 
     const playerSprite = {
@@ -845,22 +792,8 @@
     };
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
-    const PARRY_FX_META = { url: 'assets/sprites/VFX/Parry FX.png', frames: 5, fps: 41.6667, width: 170, height: 34 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
-    const parryFx = {
-      mgr: null,
-      sprite: null,
-      widthUnits: 0,
-      heightUnits: 0,
-      frameW: 0,
-      frameH: 0,
-      animDuration: 0,
-      frames: 0,
-      fps: 0,
-      activeUntil: 0
-    };
     const HEAL_FX_FRONT_OFFSET = 0.01;
-    const PARRY_FX_FRONT_OFFSET = 0.015;
     const healFlash = {
       sprite: null,
       manager: null,
@@ -959,7 +892,7 @@
       offsetX: 0,
       offsetY: 0
     };
-    let actionEndAt = 0; // generic end time for non-combo actions (hurt, heavy, parry, death)
+    let actionEndAt = 0; // generic end time for non-combo actions (hurt, heavy, death)
 
     async function createManagerAuto(metaKey, computeBaseline = false) {
       const meta = SHEETS[metaKey];
@@ -1187,101 +1120,6 @@
 
     applyAnimationScale(1);
 
-    function parrySpriteHalfWidthUnits() {
-      const meta = playerSprite.frameMeta?.parry;
-      const heightUnits = playerSprite.sizeByAnim?.parry ?? playerSprite.sizeUnits;
-      if (!heightUnits || heightUnits <= 0) return 0;
-      const frameH = meta?.frameH || 0;
-      const frameW = meta?.frameW || 0;
-      if (frameH > 0 && frameW > 0) {
-        return Math.max(0, heightUnits * (frameW / frameH) * 0.5);
-      }
-      return Math.max(0, heightUnits * 0.5);
-    }
-
-    async function initParryFx() {
-      const { ok, w: sheetW, h: sheetH } = await loadImage(PARRY_FX_META.url);
-      if (!ok) { console.warn('Parry FX sprite missing; skipping.'); return; }
-      const frames = Math.max(1, PARRY_FX_META.frames || 1);
-      const rawW = sheetW || (PARRY_FX_META.width ?? 0);
-      const rawH = sheetH || (PARRY_FX_META.height ?? 0);
-      const frameW = frames > 0 ? Math.floor(rawW / frames) : rawW;
-      const frameH = rawH;
-      if (!frameW || !frameH) { console.warn('Parry FX sprite has invalid dimensions; skipping.'); return; }
-      const fps = Math.max(1, PARRY_FX_META.fps || 30);
-      parryFx.widthUnits = frameW / PPU;
-      parryFx.heightUnits = frameH / PPU;
-      parryFx.frameW = frameW;
-      parryFx.frameH = frameH;
-      parryFx.frames = frames;
-      parryFx.fps = fps;
-      parryFx.animDuration = (frames / fps) * 1000;
-      const mgr = new BABYLON.SpriteManager('fx_parry', PARRY_FX_META.url, 1,
-        { width: frameW, height: frameH }, scene);
-      mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
-      mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
-      mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
-      parryFx.mgr = mgr;
-    }
-
-    function stopParryFx() {
-      if (parryFx.sprite) {
-        parryFx.sprite.dispose();
-        parryFx.sprite = null;
-      }
-      parryFx.activeUntil = 0;
-    }
-
-    function playParryFx(now = performance.now()) {
-      if (!parryFx.mgr) return;
-      if (parryFx.sprite) {
-        parryFx.sprite.dispose();
-      }
-      const sp = new BABYLON.Sprite('fx_parry_active', parryFx.mgr);
-      const heightUnits = parryFx.heightUnits || (parryFx.widthUnits || 0);
-      if (heightUnits > 0) sp.size = heightUnits;
-      if (parryFx.widthUnits > 0) sp.width = parryFx.widthUnits;
-      if (parryFx.heightUnits > 0) sp.height = parryFx.heightUnits;
-      const playerSp = playerSprite.sprite;
-      const basePos = playerSp ? playerSp.position : placeholder.position;
-      const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z :
-        (typeof placeholder.position.z === 'number' ? placeholder.position.z : 0);
-      const facing = state.facing < 0 ? -1 : 1;
-      const offset = parrySpriteHalfWidthUnits();
-      const targetX = basePos.x + facing * offset;
-      sp.position = new BABYLON.Vector3(targetX, torsoCenterY(), baseZ - PARRY_FX_FRONT_OFFSET);
-      sp.cellIndex = 0;
-      if (playerSp && typeof playerSp.renderingGroupId === 'number') {
-        sp.renderingGroupId = playerSp.renderingGroupId;
-      }
-      const from = 0;
-      const to = Math.max(0, parryFx.frames - 1);
-      const frameDuration = parryFx.fps > 0 ? 1000 / parryFx.fps : 1000 / 30;
-      sp.playAnimation(from, to, false, frameDuration);
-      parryFx.sprite = sp;
-      parryFx.activeUntil = now + (parryFx.animDuration || 0);
-    }
-
-    function updateParryFx(now) {
-      if (!parryFx.sprite) return;
-      const sp = parryFx.sprite;
-      const playerSp = playerSprite.sprite;
-      const basePos = playerSp ? playerSp.position : placeholder.position;
-      const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z :
-        (typeof placeholder.position.z === 'number' ? placeholder.position.z : 0);
-      const facing = state.facing < 0 ? -1 : 1;
-      const offset = parrySpriteHalfWidthUnits();
-      sp.position.x = basePos.x + facing * offset;
-      sp.position.y = torsoCenterY();
-      sp.position.z = baseZ - PARRY_FX_FRONT_OFFSET;
-      if (playerSp && typeof playerSp.renderingGroupId === 'number') {
-        sp.renderingGroupId = playerSp.renderingGroupId;
-      }
-      if (parryFx.activeUntil && now >= parryFx.activeUntil) {
-        stopParryFx();
-      }
-    }
-
     async function initHealFx() {
       const { ok, w: sheetW, h: sheetH } = await loadImage(HEAL_FX_META.url);
       if (!ok) { console.warn('Heal FX sheet missing; skipping.'); return; }
@@ -1473,10 +1311,6 @@
       const h  = await createManagerAuto('hurt');  if (h.ok)  playerSprite.mgr.hurt  = h.mgr;
       const d  = await createManagerAuto('death'); if (d.ok)  playerSprite.mgr.death = d.mgr;
 
-      // Block + Parry
-      const b  = await createManagerAuto('block'); if (b.ok)  playerSprite.mgr.block = b.mgr;
-      const p  = await createManagerAuto('parry'); if (p.ok)  playerSprite.mgr.parry = p.mgr;
-
       // Create sprite aligned with placeholder
       const sp = new BABYLON.Sprite('playerSprite', playerSprite.mgr.idle);
       sp.size = playerSprite.sizeUnits;
@@ -1499,7 +1333,6 @@
     }
       initPlayerSprite();
       initHealFx();
-      initParryFx();
       initHealFlash();
       spawnShrine(-2, 0);
 
@@ -2862,38 +2695,8 @@
       spawnBat(4, 1.6, 3, 8);
 
       // === Actions ===
-    function triggerParry() {
-      const now = performance.now();
-      if (state.dead || state.blocking || state.rolling) return;
-      if (state.guardBrokenUntil && now < state.guardBrokenUntil) return;
-      if (state.flasking) cleanupFlaskState({ keepActing: true });
-      state.parryOpen = true;
-      state.parryUntil = now + PARRY_WINDOW_MS;
-
-      state.flasking = false;
-      state.acting = true; // prevent the state machine from swapping parry out
-      stopParryFx();
-      actionEndAt = now + PARRY_WINDOW_MS;
-    }
-
-    function startBlock() {
-      const now = performance.now();
-      if (state.dead || state.acting || state.blocking || state.rolling) return;
-      if (state.guardBrokenUntil && now < state.guardBrokenUntil) return;
-      state.blocking = true;
-      state.parryOpen = false;
-      state.parryUntil = 0;
-      stopParryFx();
-      if (playerSprite.mgr.block) setAnim('block', true);
-      // Blocking doesn't set acting; you can still move while holding block
-    }
-    function stopBlock() {
-      state.blocking = false;
-      // Next tick the state machine will choose idle/walk/run/jump/fall
-    }
-
     function tryFlask() {
-      if (state.dead || stats.flaskCount <= 0 || state.rolling || state.blocking) return;
+      if (state.dead || stats.flaskCount <= 0 || state.rolling) return;
       if (state.acting && !state.flasking) return;
       if (state.flasking) return;
       setFlasks(stats.flaskCount - 1);
@@ -2919,9 +2722,6 @@
         cleanupFlaskState();
       }
       setST(stats.stam - stats.rollCost);
-      if (state.blocking) stopBlock();
-      state.parryOpen = false;
-      state.parryUntil = 0;
       const now = performance.now();
       const startOffset = Math.max(0, stats.iFrameStart || 0);
       const endOffset = Math.max(startOffset, stats.iFrameEnd || 0);
@@ -2939,155 +2739,9 @@
       setAnim('roll', true);
     }
 
-    function computeActorPosition(actor) {
-      if (!actor) return null;
-      try {
-        if (typeof actor.getPosition === 'function') {
-          const pos = actor.getPosition(actor);
-          if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') return pos;
-        }
-        if (typeof actor.getOrigin === 'function') {
-          const origin = actor.getOrigin(actor);
-          if (origin && typeof origin.x === 'number' && typeof origin.y === 'number') return origin;
-        }
-      } catch (err) {
-        console.warn('computeActorPosition error', err);
-      }
-      return null;
-    }
-
-    function attackerIsInFront(event) {
-      if (!event || !event.source) return true;
-      const attackerPos = computeActorPosition(event.source);
-      const playerPos = computeActorPosition(playerActor);
-      if (!attackerPos || !playerPos) return true;
-      const dx = attackerPos.x - playerPos.x;
-      if (Math.abs(dx) < 0.001) return true;
-      return dx * state.facing >= 0;
-    }
-
-    function handleParrySuccess(event, now) {
-      event.applyDamage = false;
-      event.cancelled = true;
-      event.handled = true;
-      event.parried = true;
-      state.parryOpen = false;
-      state.parryUntil = now;
-      stopParryFx();
-      if (playerSprite.mgr.parry) setAnim('parry', false);
-      triggerParryFx(event.source, now);
-      applyParryStagger(event.source, now, PARRY_STAGGER_MS);
-      if (playerSprite && playerSprite.animDurationMs) {
-        actionEndAt = Math.max(actionEndAt || 0, now + playerSprite.animDurationMs);
-      }
-    }
-
-    function triggerParryFx(attackerActor, now = performance.now()) {
-      applyImpactEffects({
-        hitstopMs: HITSTOP_LIGHT_MS,
-        shakeMagnitude: CAMERA_SHAKE_MAG * 0.85,
-        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
-      });
-      playParryFx(now);
-      if (attackerActor && attackerActor.id) {
-        console.debug('[Parry] success vs', attackerActor.id);
-      }
-    }
-
-    function applyParryStagger(attackerActor, now, durationMs) {
-      if (!attackerActor || !durationMs) return;
-      const duration = Math.max(0, durationMs);
-      if (duration <= 0) return;
-      const meta = attackerActor.meta || attackerActor.data || {};
-      const entity = meta?.entity || attackerActor.data?.entity;
-      if (!entity) {
-        attackerActor.data = attackerActor.data || {};
-        const until = now + duration;
-        attackerActor.data.staggeredUntil = Math.max(attackerActor.data.staggeredUntil || 0, until);
-        return;
-      }
-      const until = now + duration;
-      entity.staggeredUntil = Math.max(entity.staggeredUntil || 0, until);
-      if (entity.type === 'wolf') {
-        entity.vx = 0;
-        entity.vy = 0;
-        entity.attackQueue = [];
-        entity.comboIndex = 0;
-        entity.currentAttack = null;
-        entity.attackHitAt = 0;
-        entity.attackEndAt = 0;
-        entity.readyUntil = until;
-        entity.nextComboAt = Math.max(entity.nextComboAt || 0, until + 200);
-        entity.state = 'hit';
-        entity.hitReactUntil = until;
-        entity.stateUntil = until;
-        entity.leapState = null;
-        entity.pendingLandingState = null;
-        if (entity.mgr?.hit) setEnemyAnim(entity, 'hit', { force: true });
-      } else if (entity.type === 'bat') {
-        if (entity.attackHitbox) {
-          entity.attackHitbox.markRemove = true;
-          entity.attackHitbox = null;
-        }
-        entity.attackStartedAt = 0;
-        entity.attackDidDamage = false;
-        entity.nextAttackAt = Math.max(entity.nextAttackAt || 0, until + 200);
-        entity.vx = 0;
-        entity.vy = 0;
-        entity.state = 'hit';
-        entity.hitReactUntil = until;
-        entity.animLockUntil = until;
-        entity.animLockName = 'hit';
-        batSetDesiredAnim(entity, 'hit', { preserveAnchor: true, force: true });
-      }
-    }
-
-    function triggerBlockFx(attackerActor) {
-      applyImpactEffects({
-        hitstopMs: Math.floor(HITSTOP_LIGHT_MS * 0.7),
-        shakeMagnitude: CAMERA_SHAKE_MAG * 0.5,
-        shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 0.8
-      });
-      if (attackerActor && attackerActor.id) {
-        console.debug('[Block] mitigated hit from', attackerActor.id);
-      }
-    }
-
-    function handleBlock(event, now) {
-      const rawDamage = Math.max(0, event?.damage || 0);
-      const drainBase = rawDamage * BLOCK_STAMINA_PER_DAMAGE;
-      const drain = rawDamage > 0 ? Math.max(drainBase, BLOCK_STAMINA_MIN_DRAIN) : 0;
-      let guardBroken = false;
-      if (drain > 0) {
-        const remaining = stats.stam - drain;
-        if (remaining <= 0) {
-          guardBroken = true;
-          setST(0);
-          triggerGuardBreak({ event, now });
-        } else {
-          setST(remaining);
-        }
-      }
-      const blockedAmount = rawDamage * BLOCK_DAMAGE_REDUCTION;
-      const damageAfterBlock = Math.max(0, rawDamage - blockedAmount);
-      event.damage = damageAfterBlock;
-      event.applyDamage = damageAfterBlock > 0;
-      event.cancelled = false;
-      event.handled = damageAfterBlock <= 0;
-      event.blocked = true;
-      event.blockDamageReduction = BLOCK_DAMAGE_REDUCTION;
-      event.blockedDamage = Math.max(0, rawDamage - damageAfterBlock);
-      event.blockStaminaDrain = drain;
-      if (guardBroken) {
-        event.guardBroken = true;
-      } else {
-        triggerBlockFx(event.source);
-      }
-    }
-
     // Light combo
     function startLightStage(stage) {
-      if (state.dead || state.blocking) return false;
+      if (state.dead) return false;
       const name = stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
       const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
       if (stats.stam < stats.lightCost) return false;
@@ -3111,7 +2765,7 @@
       return true;
     }
     function tryStartLight() {
-      if (state.dead || state.rolling || state.blocking) return;
+      if (state.dead || state.rolling) return;
       if (combo.stage > 0) { combo.queued = true; return; }
       startLightStage(1);
     }
@@ -3139,7 +2793,7 @@
 
     function startHeavyCharge() {
       if (heavy.charging || heavy.releasing) return;
-      if (state.dead || state.rolling || state.blocking) return;
+      if (state.dead || state.rolling) return;
       if (!state.onGround) return;
       if (state.acting && !state.flasking) return;
       if (!playerSprite.mgr.heavy) return;
@@ -3211,42 +2865,6 @@
       }
     }
 
-    function triggerGuardBreak({ event = null, now = performance.now() } = {}) {
-      if (state.dead) return;
-      if (state.flasking) cleanupFlaskState({ keepActing: true });
-      resetHeavyState({ keepActing: true });
-      stopBlock();
-      state.parryOpen = false;
-      state.parryUntil = 0;
-      state.flasking = false;
-      state.acting = true;
-      state.rolling = false;
-      state.rollT = 0;
-      state.rollInvulnStartAt = 0;
-      state.rollInvulnEndAt = 0;
-      state.rollInvulnDuration = 0;
-      state.rollInvulnApplied = false;
-      state.iFramed = false;
-      Combat.setInvulnerable(playerActor, 'roll', false);
-      combo.stage = 0;
-      combo.queued = false;
-      combo.pendingHit = false;
-      combo.hitMeta = null;
-      combo.hitAt = 0;
-      const guardEnd = now + GUARD_BREAK_STUN_MS;
-      state.guardBrokenUntil = Math.max(state.guardBrokenUntil || 0, guardEnd);
-      if (playerSprite.mgr.hurt) setAnim('hurt', false);
-      actionEndAt = guardEnd;
-      applyImpactEffects({
-        hitstopMs: Math.floor(HITSTOP_HURT_MS * 0.8),
-        shakeMagnitude: CAMERA_SHAKE_MAG,
-        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
-      });
-      if (event?.source?.id) {
-        console.debug('[GuardBreak] stunned by', event.source.id);
-      }
-    }
-
     // Hurt + Death
     function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
@@ -3267,7 +2885,6 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
-      state.blocking = false; state.parryOpen = false;
       combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('death', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
@@ -3317,7 +2934,6 @@
     function updateOverlay() {
       if (!overlayShow) return;
       const now = performance.now();
-      const parryRemain = Math.max(0, state.parryUntil - now);
       const heavyHoldMs = heavy.charging ? heavy.chargeHoldMs : heavy.lastHoldMs;
       const heavyHoldSec = heavyHoldMs / 1000;
       const heavyDmg = heavy.releasing ? heavy.releaseDamage : (heavy.lastDamage || stats.heavyDamage);
@@ -3328,12 +2944,11 @@
         `Anim:${playerSprite.state} loop:${playerSprite.loop}  size:${playerSprite.sizeUnits?.toFixed(2)} base:${playerSprite.baselineUnits?.toFixed(3)}\n` +
         `Y:${playerSprite.sprite?.position.y.toFixed(2)} FeetCenter:${feetCenterY().toFixed(2)} Ground:0 Air:${!state.onGround}\n` +
         `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
-        `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
         `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)}\n` +
         `Hitstop:${hitstopMs.toFixed(0)}ms  CamShake:${cameraShake.enabled} (active:${cameraShake.active})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
+        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
@@ -3464,10 +3079,6 @@
       if (Keys.debugHurt) { triggerHurt(15); Keys.debugHurt = false; }
       if (Keys.debugDie)  { die(); Keys.debugDie = false; }
 
-      // Parry window close
-      if (state.parryOpen && now > state.parryUntil) state.parryOpen = false;
-      if (state.guardBrokenUntil && now >= state.guardBrokenUntil) state.guardBrokenUntil = 0;
-
       // Handle light combo progression
       if (combo.stage > 0 && now >= combo.endAt) {
         const cur = 'light' + combo.stage;
@@ -3480,7 +3091,7 @@
           state.acting = false;
         }
       }
-      // Handle generic action end (hurt, heavy, parry, death)
+      // Handle generic action end (hurt, heavy, death)
       if (state.acting && actionEndAt && now >= actionEndAt) {
         if (state.dead) startRespawn();
         else if (state.flasking) cleanupFlaskState();
@@ -3497,7 +3108,6 @@
           heavy.charged = false;
         }
         actionEndAt = 0;
-        state.parryOpen = false; // ensure parry window is closed
       }
 
       // Physics (drive placeholder)
@@ -3537,7 +3147,7 @@
         const jumpPressedRecently = state.lastJumpPressAt &&
           (now - state.lastJumpPressAt) <= LANDING_SPAM_GRACE_MS;
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
-          !state.rolling && (!state.acting || state.flasking) && !state.blocking && !state.dead &&
+          !state.rolling && (!state.acting || state.flasking) && !state.dead &&
           !jumpBuffered && !jumpPressedRecently;
         if (canTriggerLanding) {
           const dur = (landingMeta.frames / landingMeta.fps) * 1000;
@@ -3578,7 +3188,6 @@
           stopHealFx();
         }
       }
-      updateParryFx(now);
       updateHealFlash(now);
 
       // Shadow follows X; tiny shrink when airborne
@@ -3594,7 +3203,7 @@
         const jumpBufferedNow = state.jumpBufferedAt &&
           (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
         const jumpPressedAfterLanding = state.lastJumpPressAt > state.landingTriggeredAt;
-        const eligibleNow = state.onGround && !state.blocking && (!state.acting || state.flasking) && !state.dead &&
+        const eligibleNow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
           now < state.landingUntil && !jumpBufferedNow && !jumpPressedAfterLanding;
         if (!eligibleNow) {
           state.landing = false;
@@ -3612,8 +3221,6 @@
 
         if (landingActive) {
           targetAnim = 'landing';
-        } else if (state.blocking) {
-          targetAnim = 'block'; // override while holding block
         } else if (state.climbing) {
           if (state.vy > 0.15) targetAnim = 'climbUp';
           else if (state.vy < -0.15) targetAnim = 'climbDown';
@@ -3655,7 +3262,7 @@
 
     if (typeof window !== 'undefined') window.EotRCombat = Combat;
 
-    console.log('[EotR] Phase 2.3.1 (Parry/Block bugfix) boot OK');
+    console.log('[EotR] Phase 2.3.1 boot OK');
   } catch (err) {
     console.error('Boot error:', err);
     alert('Boot error (see console for details).');

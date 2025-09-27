@@ -50,7 +50,7 @@
 
 **Acts & Biomes.**
 
-1. **Lost Glades (Tutorial)** — Shrine awaken; learn movement, roll, parry on single wolf; anti-air on bat.
+1. **Lost Glades (Tutorial)** — Shrine awaken; learn movement, roll, timing strikes on single wolf; anti-air on bat.
 2. **Act I: Dusk Wood** — Wolf territory; white **Pack-Leader** seals the forest.
 3. **Act II: Castle Prison → Blood Mansion** — Bats swarm; **Skeleton Warriors** guard cells; **Fallen Knight** lurks behind a hidden, keyed door; **Skeleton King** rules the mansion.
 4. **Act III: Deadwind Pass → Forgotten Cemetery** — Spectral variants and **Ghost Warriors** lead to the **Angel of Death**.
@@ -81,15 +81,14 @@
 ### Hurtboxes / Hitboxes
 
 * **Scale:** hero hurtbox \~20×44 px; expanded 10% while rolling ends (vulnerability).
-* **Hitstop:** 60–100 ms on landed hits (longer on heavy/parry).
+* **Hitstop:** 60–100 ms on landed hits (longer on charged heavy).
 * **I-frames:** roll frames 6–18; flask roll-cancel available after 0.5 s.
 
 ### Offense, Defense & Cancel Rules
 
-* **Light chain:** 3 attacks; L1→L2, L2→L3 cancel windows start on active+6f; L3 cancels only to roll/parry.
+* **Light chain:** 3 attacks; L1→L2, L2→L3 cancel windows start on active+6f; L3 cancels only to roll.
 * **Heavy/Charge:** hold 0.4–0.8 s; adds +12 dmg; can feint cancel back to neutral up to 0.25 s.
-* **Block:** -80% damage; stamina chip −2/tick; **Guard break** at 0 stamina → 0.8 s daze.
-* **Parry:** 120 ms window; successful parry opens a punish window and grants a small hit heal with Guard tier-3.
+* **Deflection:** precise rolls reduce incoming chip to zero and add 10 stamina on successful avoid.
 
 ### Resource Economy
 
@@ -110,9 +109,9 @@
   3. Unlock **Charged Follow-up** (quick lunge, 20 dmg, −14 stamina).
 * **Guard**
 
-  1. +15% block stability (slower stamina drain).
-  2. Parry returns **4 HP** on success.
-  3. **Counter-Riposte:** first light after parry deals ×1.5 and refreshes 10 stamina.
+  1. +10% stamina regeneration.
+  2. Perfect rolls restore **8 stamina** on success.
+  3. **Riposte Flow:** first light after a perfect roll deals ×1.2 and refreshes 5 stamina.
 * **Vow**
 
   1. +1 flask capacity or +12% flask efficiency (choose once).
@@ -121,7 +120,7 @@
 
 ### Relics (v1)
 
-* **Broken Vow** (Fallen Knight): +20 ms parry grace.
+* **Broken Vow** (Fallen Knight): extends perfect-roll window by +20 ms.
 * **Howl Fragment** (White Wolf): stamina regen +10% when ≥2 enemies are aggro.
 * **Halo Chip** (Angel NG+): enables perfect-roll tiny shockwave (cosmetic in v1).
 
@@ -137,7 +136,7 @@
 ### Lost Glades
 
 * **Rooms:** 3 compact; 1 shrine.
-* **Teachings:** jump, roll through wolf lunge, parry popup once; anti-air bat.
+* **Teachings:** jump, roll through wolf lunge, spacing prompts once; anti-air bat.
 
 ### Dusk Wood
 
@@ -196,13 +195,13 @@
 * **Sword:** 2-hit chain (mid/mid) or 3-hit (mid-low-high); step-in thrust (gap close).
 * **Axe:** horizontal cleave (super-armor wind-up 10f), overhead slam (ground FX).
 * **Telegraphs:** shoulder roll (thrust), hip turn (cleave), raised elbows (overhead).
-* **Counters:** parryable only in the first 8f of active swing; safe punish after slam (20–28f).
+* **Counters:** roll through the first 8f of active swing; safe punish after slam (20–28f).
 
 ### Ghost Warrior 3
 
 * **States:** Idle Hover → Short Blink (≤ 2 tiles) → **Attack1** quick cut, **Attack2** step-in slash, **Attack3** long multi-hit (22f active in 3 segments) → Fade-out (invuln 8f) → Reappear.
 * **Telegraphs:** cloak flare, low hum; long string shows scything afterimage.
-* **Counterplay:** stay close to parry short cuts; roll through final segment of long string.
+* **Counterplay:** stay close to shorten combos; roll through final segment of long string.
 
 ---
 
@@ -221,14 +220,14 @@
 * **HP 420. Arena:** crypt pillars.
 * **P1:** Lights 1–3, roll catch thrust, aerial slash, slide into uppercut.
 * **P2 (≤50%):** “Madness” — every recovery −4f; adds feint into real thrust; flask punishable if you bait.
-* **Punish:** parry on thrust (tight 6f); whiff punish uppercut (18f window).
+* **Punish:** bait thrust then roll and strike within 18f; whiff punish uppercut (18f window).
 * **Drop:** **Broken Vow** relic.
 
 ### Skeleton King (Mid Boss)
 
 * **HP 520. Arena:** pillars + 2 chandeliers (rope HP 1 hit).
-* **P1:** Royal Cleave (wide), Shield Bash (guard break), Gap-Closer Thrust.
-* **P2 (≤50%):** gains **Bone Shard Volley** (3 projectiles; parryable if close) and **Spectral Summon** (2 reduced-HP skeletons).
+* **P1:** Royal Cleave (wide), Shield Bash, Gap-Closer Thrust.
+* **P2 (≤50%):** gains **Bone Shard Volley** (3 projectiles; roll-through if close) and **Spectral Summon** (2 reduced-HP skeletons).
 * **Punish:** thrust recovery 20f; bash is roll-through → light×2 safe.
 * **Drop:** **Throne Seal**, +1 flask slot.
 
@@ -238,7 +237,7 @@
 * **P1:** Ground sweep (half screen), Feather fan (5 bolts), short blink.
 * **P2 (≤70%):** **Dive Reap** (tracks; leaves lingering wake), **Ring of Wails** (expanding circle—must roll timing), sustained wind.
 * **P3 (≤50%):** **Black Halo** (orbiting blades; safe gaps), long teleport feints (two afterimages; only central body deals damage), **8-dir bolts** after every third teleport.
-* **Punish:** grounded reaps are parryable; after Dive → 24f punish; when halo retracts → 14f.
+* **Punish:** grounded reaps leave a 20f punish window; after Dive → 24f punish; when halo retracts → 14f.
 * **End:** choice on crown at shrine.
 
 ---
@@ -272,7 +271,7 @@
 
 **Onboarding.**
 
-* First-time contextual prompts (**press J to attack, Space to jump, I to parry (tap) / block (hold), Hold Shift to run**) auto-disable after successful use.
+* First-time contextual prompts (**press J to attack, Space to jump, L to roll, Hold Shift to run**) auto-disable after successful use.
 
 **Menus.**
 
@@ -309,7 +308,7 @@
   * Deadwind Pass: desaturated LUT + blue vignette pulses tied to sanity level
   * Cemetery/Finale: stark LUT; selective bloom only on stained glass & Angel blades
 
-**FX library.** Impact ring, parry flare, dust puffs, feather bolts, bone shards, spectral trails, halo blades, shrine glow, on-hit white flash.
+**FX library.** Impact ring, dust puffs, feather bolts, bone shards, spectral trails, halo blades, shrine glow, on-hit white flash.
 
 ---
 
@@ -317,7 +316,7 @@
 
 **SFX sets (approx 40 clips).**
 
-* Footfalls x3 surfaces, jump/land, roll woosh, light/heavy swings, parry ring (pitched by success), block thud, hit fleshy/metal/ethereal, wolf growls/howl, bat screech (by tier), skeleton clank, ghost blink, shrine hum, gate open, key pickup, boss roars.
+* Footfalls x3 surfaces, jump/land, roll woosh, light/heavy swings, perfect-roll chime, hit fleshy/metal/ethereal, wolf growls/howl, bat screech (by tier), skeleton clank, ghost blink, shrine hum, gate open, key pickup, boss roars.
 
 **Music.**
 
@@ -326,7 +325,7 @@
 
 **Mix targets.**
 
-* Master −16 LUFS integrated; peak −1 dBFS; SFX −12 to −6 LUFS momentary; sidechain duck music −3 dB on parry & boss roar.
+* Master −16 LUFS integrated; peak −1 dBFS; SFX −12 to −6 LUFS momentary; sidechain duck music −3 dB on boss roar.
 
 **Reverb.** Simple send reverb by biome (Castle/Mansion large hall; Forest small plate; Cemetery cathedral).
 
@@ -436,12 +435,12 @@
 
 ## 16) QA & Telemetry
 
-**Instrumentation events.** room\_enter, shrine\_rest, enemy\_kill{type}, player\_death{by}, parry\_success/fail, flask\_use, fps\_sample.
+**Instrumentation events.** room\_enter, shrine\_rest, enemy\_kill{type}, player\_death{by}, flask\_use, fps\_sample.
 
 **Acceptance per feature.**
 
 * Roll passes through wolf lunge every time with correct timing.
-* Parry window verified at 120 ms vs. Skeleton thrust.
+* Perfect roll window verified at 120 ms vs. Skeleton thrust.
 * Boss softlocks impossible (adds despawn if stuck off-nav for 5 s).
 * Memory echoes always spawn at death position; retrieve restores Ash.
 
@@ -472,7 +471,7 @@
 * Ghost Warrior 3: idle, move, attack1/2/3, hit, death, blink FX.
 * Fallen Knight: all core combat states.
 * Bosses: Skeleton King (P1/P2 moves), Angel (P1/P2/P3 moves).
-* **FX atlases:** impact, parry, dust, shards, halo, feathers.
+* **FX atlases:** impact, dust, shards, halo, feathers.
 
 **Environments**
 
@@ -519,7 +518,7 @@
 
 **Naming & states**
 
-* States use snake_case: `idle`, `walk`, `run`, `jump_start/mid/end`, `roll`, `block`, `parry`, `light1/2/3`, `heavy_charge/release`, `hurt`, `death`.
+* States use snake_case: `idle`, `walk`, `run`, `jump_start/mid/end`, `roll`, `light1/2/3`, `heavy_charge/release`, `hurt`, `death`.
 * Aseprite export: JSON (hash) with frame durations; origin pivots consistent (feet at y0).
 
 **Coding standards**
@@ -563,20 +562,20 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Goals**
 
-* Ship a responsive Dark Knight with full locomotion, stamina, roll i-frames, block/parry, flasks, and camera.
+* Ship a responsive Dark Knight with full locomotion, stamina, roll i-frames, flasks, and camera.
 
 **Tasks**
 
 * Implement movement (accel/decel, coyote, input buffer), jump (start/mid/end), roll (i-frames 6–18f), climb ladders.
 * Stamina & HP systems + UI bars; Oath Flasks (3) with roll-cancel after 0.5 s.
 * Light 1/2/3 and Heavy/Charge attacks with cancel rules; hitstop; camera micro-shake (toggle).
-* Block (−80% dmg, chip) + parry 120 ms window → stagger 0.6 s; add parry SFX ring.
+* Tune perfect-roll window (120 ms) with stamina refund; add perfect-roll SFX chime.
 * Interaction prompt; shrine prototype (heal, respawn only).
 * Hook `AnimController` to Aseprite timing; feet-baseline alignment.
 
 **Deliverables**
 
-* **Lost Glades Graybox**: flat ground + ladder + shrine; dummy target to hit/roll/parry.
+* **Lost Glades Graybox**: flat ground + ladder + shrine; dummy target to hit/roll.
 
 **DoD**
 
@@ -584,7 +583,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Test script**
 
-* Perform: 3-hit light chain → roll cancel; charged heavy → stagger dummy; parry window feels tight but fair; flask roll-cancel works.
+* Perform: 3-hit light chain → roll cancel; charged heavy → stagger dummy; perfect roll window feels tight but fair; flask roll-cancel works.
 
 ---
 
@@ -609,7 +608,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **DoD**
 
-* Parry works on wolf lunge; bat dives are readable (eye flash + screech); save/respawn solid.
+* Perfect roll through wolf lunge works; bat dives are readable (eye flash + screech); save/respawn solid.
 
 **Test script**
 
@@ -656,7 +655,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 **Tasks**
 
 * Ceiling bat clusters (4–5 per room) with aggro radius; dive cadence tuning (no “shotgun” overlaps).
-* Skeleton Sword: 2–3 hit strings, thrust gap-closer; Axe: cleave + overhead with ground FX; parry windows strict but fair.
+* Skeleton Sword: 2–3 hit strings, thrust gap-closer; Axe: cleave + overhead with ground FX; perfect-roll windows strict but fair.
 * **Portcullis puzzle** (3 bells in 5 s) → opens **Jailor** room (Axe variant) → **Crypt Key** drop.
 * Hidden wall (sigil flicker) uses key → door to optional duel (kept locked until key acquired).
 * Performance pass on swarms (culling, pooling).
@@ -667,7 +666,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **DoD**
 
-* Skeleton tells distinct (hip/shoulder tells); parryable thrust/first swing; swarms never drop FPS under 55.
+* Skeleton tells distinct (hip/shoulder tells); thrust first swing leaves a punish window after a perfect roll; swarms never drop FPS under 55.
 
 **Test script**
 
@@ -683,7 +682,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Tasks**
 
-* **Fallen Knight**: P1 normal combos; P2 (≤50% hp) “Madness” (−4f recovery, feints). Flask punishable. Drop **Broken Vow** relic (+20 ms parry grace).
+* **Fallen Knight**: P1 normal combos; P2 (≤50% hp) “Madness” (−4f recovery, feints). Flask punishable. Drop **Broken Vow** relic (+20 ms perfect-roll grace).
 * **Blood Mansion**: 1–2 rooms, chandelier hazard (rope cut) and one turret statue.
 * **Skeleton King**: P1 cleave/bash/thrust; P2 volley + summon 2 skeletons; chandelier drop stagger (optional gimmick). Drop **Throne Seal** + +1 flask slot.
 * Boss UI polish: nameplate, unique theme layers.
@@ -744,7 +743,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
   * P3: Black Halo blades + long teleports with afterimage feints + 8-dir bolts.
   * Parry only on grounded reaps; punish windows per GDD.
 * Ending choice UI at shrine (Absolution vs Taken); set NG+ flag to true (affects later runs).
-* Balance pass: enemy hp/dmg, parry windows verify (120 ms), flask sip timings; first audio mix pass (ducking, organ/choir levels).
+* Balance pass: enemy hp/dmg, perfect-roll windows verify (120 ms), flask sip timings; first audio mix pass (ducking, organ/choir levels).
 
 **Deliverables**
 
@@ -819,15 +818,15 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 ### Audio/Mix Checklist
 
-* [ ] Footsteps (3 surfaces), swing, parry, block, hurt, death per family
-* [ ] SFX balance vs music; sidechain on parry/roar
+* [ ] Footsteps (3 surfaces), swing, perfect-roll chime, hurt, death per family
+* [ ] SFX balance vs music; sidechain on boss roar
 * [ ] Loop points clean; boss transitions flawless
 
 ---
 
 ## Telemetry (always-on)
 
-* `room_enter`, `shrine_rest`, `player_death {by}`, `parry_success/fail`, `flask_use`, `fps_sample`, `boss_phase_change`, `echo_drop/recover`.
+* `room_enter`, `shrine_rest`, `player_death {by}`, `flask_use`, `fps_sample`, `boss_phase_change`, `echo_drop/recover`.
 * Use overlay (**F9**) to dump last 200 events to console.
 
 ---
