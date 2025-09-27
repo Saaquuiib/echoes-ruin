@@ -8,6 +8,10 @@
   const FALLBACK_BASELINE_PX = 6;       // if pixel-read fails
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const PARRY_WINDOW_MS = 120;          // parry window + parry anim duration
+  const PARRY_STAGGER_MS = 600;         // how long enemies stay stunned after a parry
+  const GUARD_BREAK_STUN_MS = 650;      // block break stun duration
+  const BLOCK_STAMINA_PER_DAMAGE = 1.0; // stamina drain ratio while blocking
+  const BLOCK_STAMINA_MIN_DRAIN = 6;    // ensure even light hits tax stamina
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
@@ -698,6 +702,11 @@
     const state = {
       onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity, lastJumpPressAt: -Infinity,
       rolling: false, rollT: 0, iFramed: false,
+      rollStartAt: 0,
+      rollInvulnStartAt: 0,
+      rollInvulnEndAt: 0,
+      rollInvulnDuration: 0,
+      rollInvulnApplied: false,
       acting: false, facing: 1, dead: false,
       flasking: false,
       flaskStart: 0,
@@ -712,7 +721,8 @@
       landing: false,
       landingStartAt: 0,
       landingUntil: 0,
-      landingTriggeredAt: 0
+      landingTriggeredAt: 0,
+      guardBrokenUntil: 0
     };
 
     playerActor = Combat.registerActor({
@@ -723,11 +733,34 @@
       getPosition: () => ({ x: placeholder.position.x, y: placeholder.position.y }),
       getFacing: () => state.facing,
       processHit: (event) => {
-        if (state.dead) { event.cancelled = true; return; }
-        if (state.blocking) {
+        const now = performance.now();
+        if (state.dead) {
+          event.cancelled = true;
           event.applyDamage = false;
-          event.handled = true;
-          event.blocked = true;
+          return;
+        }
+
+        if (state.rolling) {
+          const inIFrame = state.rollInvulnDuration > 0 && now >= state.rollInvulnStartAt && now < state.rollInvulnEndAt;
+          if (inIFrame) {
+            event.cancelled = true;
+            event.applyDamage = false;
+            event.handled = true;
+            return;
+          }
+        }
+
+        if (state.parryOpen) {
+          if (now <= state.parryUntil) {
+            handleParrySuccess(event, now);
+            return;
+          }
+          state.parryOpen = false;
+        }
+
+        if (state.blocking && attackerIsInFront(event)) {
+          handleBlock(event, now);
+          return;
         }
       },
       onHealthChange: (hp) => { setHP(hp); },
@@ -1841,6 +1874,7 @@
           team: 'enemy',
           hpMax: e.hpMax,
           hp: e.hpMax,
+          meta: { entity: e, type: e.type },
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
@@ -1959,6 +1993,7 @@
           team: 'enemy',
           hpMax: e.hpMax,
           hp: e.hpMax,
+          meta: { entity: e, type: e.type },
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
@@ -2633,20 +2668,26 @@
 
       // === Actions ===
     function triggerParry() {
-      if (state.dead || state.blocking) return;
+      const now = performance.now();
+      if (state.dead || state.blocking || state.rolling) return;
+      if (state.guardBrokenUntil && now < state.guardBrokenUntil) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.parryOpen = true;
-      state.parryUntil = performance.now() + PARRY_WINDOW_MS;
+      state.parryUntil = now + PARRY_WINDOW_MS;
 
       state.flasking = false;
       state.acting = true; // prevent the state machine from swapping parry out
       if (playerSprite.mgr.parry) setAnim('parry', false);
-      actionEndAt = performance.now() + PARRY_WINDOW_MS;
+      actionEndAt = now + PARRY_WINDOW_MS;
     }
 
     function startBlock() {
-      if (state.dead || state.acting || state.blocking) return;
+      const now = performance.now();
+      if (state.dead || state.acting || state.blocking || state.rolling) return;
+      if (state.guardBrokenUntil && now < state.guardBrokenUntil) return;
       state.blocking = true;
+      state.parryOpen = false;
+      state.parryUntil = 0;
       if (playerSprite.mgr.block) setAnim('block', true);
       // Blocking doesn't set acting; you can still move while holding block
     }
@@ -2682,8 +2723,162 @@
         cleanupFlaskState();
       }
       setST(stats.stam - stats.rollCost);
-      state.rolling = true; state.rollT = 0; state.iFramed = false;
+      if (state.blocking) stopBlock();
+      state.parryOpen = false;
+      state.parryUntil = 0;
+      const now = performance.now();
+      const startOffset = Math.max(0, stats.iFrameStart || 0);
+      const endOffset = Math.max(startOffset, stats.iFrameEnd || 0);
+      const iStart = now + startOffset * 1000;
+      const iEnd = now + endOffset * 1000;
+      state.rolling = true;
+      state.rollT = 0;
+      state.iFramed = false;
+      state.rollStartAt = now;
+      state.rollInvulnStartAt = iStart;
+      state.rollInvulnEndAt = iEnd;
+      state.rollInvulnDuration = Math.max(0, iEnd - iStart);
+      state.rollInvulnApplied = false;
+      Combat.setInvulnerable(playerActor, 'roll', false);
       setAnim('roll', true);
+    }
+
+    function computeActorPosition(actor) {
+      if (!actor) return null;
+      try {
+        if (typeof actor.getPosition === 'function') {
+          const pos = actor.getPosition(actor);
+          if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') return pos;
+        }
+        if (typeof actor.getOrigin === 'function') {
+          const origin = actor.getOrigin(actor);
+          if (origin && typeof origin.x === 'number' && typeof origin.y === 'number') return origin;
+        }
+      } catch (err) {
+        console.warn('computeActorPosition error', err);
+      }
+      return null;
+    }
+
+    function attackerIsInFront(event) {
+      if (!event || !event.source) return true;
+      const attackerPos = computeActorPosition(event.source);
+      const playerPos = computeActorPosition(playerActor);
+      if (!attackerPos || !playerPos) return true;
+      const dx = attackerPos.x - playerPos.x;
+      if (Math.abs(dx) < 0.001) return true;
+      return dx * state.facing >= 0;
+    }
+
+    function handleParrySuccess(event, now) {
+      event.applyDamage = false;
+      event.cancelled = true;
+      event.handled = true;
+      event.parried = true;
+      state.parryOpen = false;
+      state.parryUntil = now;
+      triggerParryFx(event.source);
+      applyParryStagger(event.source, now, PARRY_STAGGER_MS);
+      if (playerSprite && playerSprite.animDurationMs) {
+        actionEndAt = Math.max(actionEndAt || 0, now + playerSprite.animDurationMs);
+      }
+    }
+
+    function triggerParryFx(attackerActor) {
+      applyImpactEffects({
+        hitstopMs: HITSTOP_LIGHT_MS,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.85,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      });
+      if (attackerActor && attackerActor.id) {
+        console.debug('[Parry] success vs', attackerActor.id);
+      }
+    }
+
+    function applyParryStagger(attackerActor, now, durationMs) {
+      if (!attackerActor || !durationMs) return;
+      const duration = Math.max(0, durationMs);
+      if (duration <= 0) return;
+      const meta = attackerActor.meta || attackerActor.data || {};
+      const entity = meta?.entity || attackerActor.data?.entity;
+      if (!entity) {
+        attackerActor.data = attackerActor.data || {};
+        const until = now + duration;
+        attackerActor.data.staggeredUntil = Math.max(attackerActor.data.staggeredUntil || 0, until);
+        return;
+      }
+      const until = now + duration;
+      entity.staggeredUntil = Math.max(entity.staggeredUntil || 0, until);
+      if (entity.type === 'wolf') {
+        entity.vx = 0;
+        entity.vy = 0;
+        entity.attackQueue = [];
+        entity.comboIndex = 0;
+        entity.currentAttack = null;
+        entity.attackHitAt = 0;
+        entity.attackEndAt = 0;
+        entity.readyUntil = until;
+        entity.nextComboAt = Math.max(entity.nextComboAt || 0, until + 200);
+        entity.state = 'hit';
+        entity.hitReactUntil = until;
+        entity.stateUntil = until;
+        entity.leapState = null;
+        entity.pendingLandingState = null;
+        if (entity.mgr?.hit) setEnemyAnim(entity, 'hit', { force: true });
+      } else if (entity.type === 'bat') {
+        if (entity.attackHitbox) {
+          entity.attackHitbox.markRemove = true;
+          entity.attackHitbox = null;
+        }
+        entity.attackStartedAt = 0;
+        entity.attackDidDamage = false;
+        entity.nextAttackAt = Math.max(entity.nextAttackAt || 0, until + 200);
+        entity.vx = 0;
+        entity.vy = 0;
+        entity.state = 'hit';
+        entity.hitReactUntil = until;
+        entity.animLockUntil = until;
+        entity.animLockName = 'hit';
+        batSetDesiredAnim(entity, 'hit', { preserveAnchor: true, force: true });
+      }
+    }
+
+    function triggerBlockFx(attackerActor) {
+      applyImpactEffects({
+        hitstopMs: Math.floor(HITSTOP_LIGHT_MS * 0.7),
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.5,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 0.8
+      });
+      if (attackerActor && attackerActor.id) {
+        console.debug('[Block] mitigated hit from', attackerActor.id);
+      }
+    }
+
+    function handleBlock(event, now) {
+      const rawDamage = Math.max(0, event?.damage || 0);
+      const drainBase = rawDamage * BLOCK_STAMINA_PER_DAMAGE;
+      const drain = rawDamage > 0 ? Math.max(drainBase, BLOCK_STAMINA_MIN_DRAIN) : 0;
+      let guardBroken = false;
+      if (drain > 0) {
+        const remaining = stats.stam - drain;
+        if (remaining <= 0) {
+          guardBroken = true;
+          setST(0);
+          triggerGuardBreak({ event, now });
+        } else {
+          setST(remaining);
+        }
+      }
+      event.applyDamage = false;
+      event.cancelled = true;
+      event.handled = true;
+      event.blocked = true;
+      event.blockStaminaDrain = drain;
+      if (guardBroken) {
+        event.guardBroken = true;
+      } else {
+        triggerBlockFx(event.source);
+      }
     }
 
     // Light combo
@@ -2812,9 +3007,46 @@
       }
     }
 
+    function triggerGuardBreak({ event = null, now = performance.now() } = {}) {
+      if (state.dead) return;
+      if (state.flasking) cleanupFlaskState({ keepActing: true });
+      resetHeavyState({ keepActing: true });
+      stopBlock();
+      state.parryOpen = false;
+      state.parryUntil = 0;
+      state.flasking = false;
+      state.acting = true;
+      state.rolling = false;
+      state.rollT = 0;
+      state.rollInvulnStartAt = 0;
+      state.rollInvulnEndAt = 0;
+      state.rollInvulnDuration = 0;
+      state.rollInvulnApplied = false;
+      state.iFramed = false;
+      Combat.setInvulnerable(playerActor, 'roll', false);
+      combo.stage = 0;
+      combo.queued = false;
+      combo.pendingHit = false;
+      combo.hitMeta = null;
+      combo.hitAt = 0;
+      const guardEnd = now + GUARD_BREAK_STUN_MS;
+      state.guardBrokenUntil = Math.max(state.guardBrokenUntil || 0, guardEnd);
+      if (playerSprite.mgr.hurt) setAnim('hurt', false);
+      actionEndAt = guardEnd;
+      applyImpactEffects({
+        hitstopMs: Math.floor(HITSTOP_HURT_MS * 0.8),
+        shakeMagnitude: CAMERA_SHAKE_MAG,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      });
+      if (event?.source?.id) {
+        console.debug('[GuardBreak] stunned by', event.source.id);
+      }
+    }
+
     // Hurt + Death
     function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
+      if (opts.event && opts.event.applyDamage === false && !opts.force) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       if (!opts.alreadyApplied) setHP(stats.hp - dmg);
@@ -2992,20 +3224,32 @@
       if (state.rolling) {
         state.rollT += dt;
         state.vx = state.facing * stats.rollSpeed;
-        const t = state.rollT;
-        const iNow = (t >= stats.iFrameStart) && (t <= stats.iFrameEnd);
-        if (iNow !== state.iFramed) {
-          state.iFramed = iNow;
-          Combat.setInvulnerable(playerActor, 'roll', state.iFramed);
+        const inWindow = state.rollInvulnDuration > 0 && now >= state.rollInvulnStartAt && now < state.rollInvulnEndAt;
+        if (inWindow && !state.rollInvulnApplied) {
+          const remaining = Math.max(0, state.rollInvulnEndAt - now);
+          state.rollInvulnApplied = true;
+          state.iFramed = true;
+          Combat.setInvulnerable(playerActor, 'roll', true, remaining || state.rollInvulnDuration);
+        } else if (!inWindow && state.rollInvulnApplied) {
+          state.rollInvulnApplied = false;
+          state.iFramed = false;
+          Combat.setInvulnerable(playerActor, 'roll', false);
+        } else {
+          state.iFramed = inWindow;
         }
         if (state.rollT >= stats.rollDur) {
           state.rolling = false;
-          if (state.iFramed) {
+          if (state.rollInvulnApplied || state.iFramed) {
+            state.rollInvulnApplied = false;
             state.iFramed = false;
             Combat.setInvulnerable(playerActor, 'roll', false);
           }
+          state.rollInvulnStartAt = 0;
+          state.rollInvulnEndAt = 0;
+          state.rollInvulnDuration = 0;
         }
-      } else if (state.iFramed) {
+      } else if (state.rollInvulnApplied || state.iFramed) {
+        state.rollInvulnApplied = false;
         state.iFramed = false;
         Combat.setInvulnerable(playerActor, 'roll', false);
       }
@@ -3018,6 +3262,7 @@
 
       // Parry window close
       if (state.parryOpen && now > state.parryUntil) state.parryOpen = false;
+      if (state.guardBrokenUntil && now >= state.guardBrokenUntil) state.guardBrokenUntil = 0;
 
       // Handle light combo progression
       if (combo.stage > 0 && now >= combo.endAt) {
