@@ -1516,7 +1516,7 @@
       const BAT_RETURN_SPEED = 1.6;
       const BAT_RETURN_ACCEL = 6;
       const BAT_VERTICAL_MAX_SPEED = 3.0;
-      const BAT_VERTICAL_LERP = 0.12;
+      const BAT_VERTICAL_LERP = 0.03;
       const BAT_REBOUND_MAX_ABOVE_HOVER = 0.6;
       const BAT_STOOP_IN_RATE = 3.6;
       const BAT_STOOP_OUT_RATE = 1.5;
