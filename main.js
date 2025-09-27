@@ -1709,7 +1709,8 @@
         const width = overrides.width ?? (typeof def.width === 'function' ? def.width(e) : def.width);
         const height = overrides.height ?? (typeof def.height === 'function' ? def.height(e) : def.height);
         const radius = overrides.radius ?? (typeof def.radius === 'function' ? def.radius(e) : def.radius);
-        const offsetBase = overrides.offset ?? (typeof def.offset === 'function' ? def.offset(e) : def.offset) || { x: 0, y: 0 };
+        const offsetBaseSource = overrides.offset ?? (typeof def.offset === 'function' ? def.offset(e) : def.offset);
+        const offsetBase = offsetBaseSource || { x: 0, y: 0 };
         const mirror = overrides.mirror ?? def.mirror;
         const absolute = overrides.absolute ?? def.absolute;
         const facing = mirror === false ? 1 : (e.facing >= 0 ? 1 : -1);
