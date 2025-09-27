@@ -1517,6 +1517,8 @@
       const BAT_RETURN_ACCEL = 6;
       const BAT_VERTICAL_MAX_SPEED = 3.0;
       const BAT_VERTICAL_LERP = 0.03;
+      const BAT_HOVER_RETURN_SPEED = 1.8;
+      const BAT_HOVER_RETURN_EPSILON = 0.02;
       const BAT_REBOUND_MAX_ABOVE_HOVER = 0.6;
       const BAT_STOOP_IN_RATE = 3.6;
       const BAT_STOOP_OUT_RATE = 1.5;
@@ -1985,7 +1987,8 @@
           desiredAnimName: '', desiredAnimOpts: null, desiredAnimForce: false,
           animLockUntil: 0, animLockName: null,
           pendingAnimName: '', pendingAnimOpts: null, pendingAnimForce: false,
-          stoopProgress: 0
+          stoopProgress: 0,
+          hoverReturnActive: false
         };
         await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
@@ -2432,12 +2435,17 @@
         const releaseDist = BAT_AGGRO_RADIUS + BAT_AGGRO_HYSTERESIS;
         const shouldAggro = playerInView && detectionDist <= BAT_AGGRO_RADIUS;
         if (shouldAggro) {
+          if (!e.aggro) {
+            e.hoverReturnActive = false;
+          }
           e.aggro = true;
           e.awakened = true;
         }
         const leashBreak = heroFromSpawn > BAT_LEASH_RADIUS;
         if (e.aggro && (detectionDist > releaseDist || !playerInView || leashBreak)) {
           e.aggro = false;
+          e.hoverReturnActive = true;
+          e.bob = 0;
           e.nextAttackAt = Math.max(e.nextAttackAt, now + BAT_ATTACK_COOLDOWN_MS);
           if (e.attackHitbox) {
             e.attackHitbox.markRemove = true;
@@ -2483,7 +2491,10 @@
           }
           case 'fly': {
             batSetDesiredAnim(e, 'fly');
-            e.bob += dt * 2.2;
+            const returningToHover = !e.aggro && e.hoverReturnActive;
+            if (!e.aggro && !returningToHover) {
+              e.bob += dt * 2.2;
+            }
             const baseClampMin = e.patrolMin ?? (e.homeX - 3);
             const baseClampMax = e.patrolMax ?? (e.homeX + 3);
             const leashClampMin = e.spawnAnchor.x - (BAT_LEASH_RADIUS - 0.25);
@@ -2492,7 +2503,8 @@
             const clampMax = e.aggro ? leashClampMax : baseClampMax;
             const minCenter = centerFromFoot(e, -0.1);
             const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
-            const bobValue = e.aggro ? 0 : Math.sin(e.bob) * 0.35;
+            const baseHoverCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover)));
+            const bobValue = (!e.aggro && !returningToHover) ? Math.sin(e.bob) * 0.35 : 0;
             const stoopAmount = e.stoopProgress ?? 0;
             const targetX = e.aggro
               ? Math.max(clampMin, Math.min(clampMax, playerX))
@@ -2501,7 +2513,7 @@
             const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, heroTorsoY));
             const desiredCenter = e.aggro
               ? idleCenter + (pursuitCenter - idleCenter) * stoopAmount
-              : idleCenter;
+              : (returningToHover ? baseHoverCenter : idleCenter);
             const toX = targetX - e.x;
             const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
             let desiredVX = 0;
@@ -2521,6 +2533,17 @@
               const maxStep = BAT_VERTICAL_MAX_SPEED * dt;
               const step = Math.sign(desiredStep) * Math.min(Math.abs(desiredStep), maxStep);
               e.y += step;
+            } else if (returningToHover) {
+              const dy = desiredCenter - e.y;
+              const maxStep = BAT_HOVER_RETURN_SPEED * dt;
+              const step = Math.sign(dy) * Math.min(Math.abs(dy), maxStep);
+              e.y += step;
+              const remaining = desiredCenter - e.y;
+              if (Math.abs(remaining) <= BAT_HOVER_RETURN_EPSILON) {
+                e.y = desiredCenter;
+                e.hoverReturnActive = false;
+                e.bob = 0;
+              }
             } else {
               e.y = desiredCenter;
             }
