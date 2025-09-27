@@ -1496,11 +1496,11 @@
         contact: {
           anim: 'attack',
           hitFrac: 0.45,
-          durationMs: 160,
+          durationMs: 140,
           damage: 9,
-          width: e => e.sizeUnits * 0.66,
-          height: e => e.sizeUnits * 0.46,
-          offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
+          shape: 'circle',
+          radius: e => e.sizeUnits * 0.18,
+          offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.22 }),
           cooldownMs: 900
         }
       };
@@ -1515,14 +1515,13 @@
       const BAT_FOLLOW_ACCEL = 9;
       const BAT_RETURN_SPEED = 1.6;
       const BAT_RETURN_ACCEL = 6;
-      const BAT_FOLLOW_Y_OFFSET = 0.15;
+      const BAT_FOLLOW_Y_OFFSET = 0.08;
       const BAT_VERTICAL_MAX_SPEED = 3.0;
-      const BAT_VERTICAL_LERP = 0.12;
+      const BAT_VERTICAL_LERP = 0.16;
+      const BAT_VERTICAL_EPS = 0.12;
       const BAT_REBOUND_MAX_ABOVE_HOVER = 0.6;
       const BAT_STOOP_IN_RATE = 3.6;
       const BAT_STOOP_OUT_RATE = 1.5;
-      const BAT_STOOP_TARGET_FRAC = 0.82;
-      const BAT_STOOP_BOB_SCALE = 0.15;
 
       function computeWolfTargetX(e, playerX) {
         if (!Number.isFinite(playerX)) playerX = 0;
@@ -1677,8 +1676,10 @@
 
       function spawnBatHitbox(e, def, overrides = {}) {
         if (!e.combat || !def || e.dying) return null;
+        const shape = overrides.shape ?? def.shape ?? 'rect';
         const width = overrides.width ?? (typeof def.width === 'function' ? def.width(e) : def.width);
         const height = overrides.height ?? (typeof def.height === 'function' ? def.height(e) : def.height);
+        const radius = overrides.radius ?? (typeof def.radius === 'function' ? def.radius(e) : def.radius);
         const offsetDefault = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
         const offset = overrides.offset ?? offsetDefault;
         const duration = overrides.durationMs ?? def.durationMs ?? 120;
@@ -1686,9 +1687,10 @@
         const onHit = overrides.onHit || null;
         const onExpire = overrides.onExpire || null;
         const hitbox = Combat.spawnHitbox(e.combat, {
-          shape: 'rect',
+          shape,
           width: width ?? 0,
           height: height ?? 0,
+          radius: radius ?? 0,
           offset,
           durationMs: duration,
           damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
@@ -1699,6 +1701,35 @@
           onExpire
         });
         return hitbox;
+      }
+
+      function computeBatContactShape(e, def = BAT_ATTACK_DATA.contact, overrides = {}) {
+        if (!e || !def) return null;
+        const shape = overrides.shape ?? def.shape ?? 'rect';
+        const width = overrides.width ?? (typeof def.width === 'function' ? def.width(e) : def.width);
+        const height = overrides.height ?? (typeof def.height === 'function' ? def.height(e) : def.height);
+        const radius = overrides.radius ?? (typeof def.radius === 'function' ? def.radius(e) : def.radius);
+        const offsetBase = overrides.offset ?? (typeof def.offset === 'function' ? def.offset(e) : def.offset) || { x: 0, y: 0 };
+        const mirror = overrides.mirror ?? def.mirror;
+        const absolute = overrides.absolute ?? def.absolute;
+        const facing = mirror === false ? 1 : (e.facing >= 0 ? 1 : -1);
+        const offsetX = (offsetBase.x || 0) * (absolute ? 1 : facing);
+        const center = { x: e.x + offsetX, y: e.y + (offsetBase.y || 0) };
+        if (shape === 'circle') {
+          return { type: 'circle', center, radius: Math.max(0, radius || 0) };
+        }
+        const w = Math.max(0, width || 0);
+        const h = Math.max(0, height || 0);
+        return {
+          type: 'rect',
+          center,
+          width: w,
+          height: h,
+          minX: center.x - w * 0.5,
+          maxX: center.x + w * 0.5,
+          minY: center.y - h * 0.5,
+          maxY: center.y + h * 0.5
+        };
       }
 
       function assignWolfPackRoles() {
@@ -2359,6 +2390,17 @@
         const heroCenterY = heroFeetY + heroSize * 0.5;
         const playerHurtShape = computeHurtboxShape(playerHurtbox);
         const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
+        const heroTorsoCenter = (() => {
+          try {
+            const ty = torsoCenterY();
+            return Number.isFinite(ty) ? ty : heroCenterY;
+          } catch {
+            return heroCenterY;
+          }
+        })();
+        const minCenter = centerFromFoot(e, -0.1);
+        const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
+        const followTargetY = Math.max(minCenter, Math.min(maxCenter, heroTorsoCenter + BAT_FOLLOW_Y_OFFSET));
         if (e.dead) {
           if (e.sprite) {
             e.sprite.position.x = e.x;
@@ -2459,23 +2501,17 @@
             const leashClampMax = e.spawnAnchor.x + (BAT_LEASH_RADIUS - 0.25);
             const clampMin = e.aggro ? leashClampMin : baseClampMin;
             const clampMax = e.aggro ? leashClampMax : baseClampMax;
-            const minCenter = centerFromFoot(e, -0.1);
-            const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
-            const bobValue = Math.sin(e.bob) * 0.35;
             const stoopAmount = e.stoopProgress ?? 0;
+            const bobBase = Math.sin(e.bob) * 0.35;
+            const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobBase)));
+            const pursuitBob = e.aggro ? bobBase * 0.2 : 0;
+            const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, followTargetY + pursuitBob));
+            const desiredCenter = e.aggro
+              ? idleCenter + (pursuitCenter - idleCenter) * stoopAmount
+              : idleCenter;
             let targetX = e.aggro
               ? Math.max(clampMin, Math.min(clampMax, playerX))
               : Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
-            const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobValue)));
-            const heroAimBase = playerHurtShape
-              ? playerHurtShape.minY + playerHurtShape.height * BAT_STOOP_TARGET_FRAC
-              : heroCenterY + BAT_FOLLOW_Y_OFFSET;
-            const pursuitAim = Math.max(minCenter, Math.min(maxCenter, heroAimBase));
-            const pursuitBob = bobValue * (1 - stoopAmount) * BAT_STOOP_BOB_SCALE;
-            const stoopCenter = Math.max(minCenter, Math.min(maxCenter, pursuitAim + pursuitBob));
-            const desiredCenter = e.aggro
-              ? idleCenter + (stoopCenter - idleCenter) * stoopAmount
-              : idleCenter;
             const toX = targetX - e.x;
             const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
             let desiredVX = 0;
@@ -2524,9 +2560,11 @@
             } else if (e.aggro && Math.abs(dx) > 0.02) {
               e.facing = dx >= 0 ? 1 : -1;
             }
-            const batHurt = computeHurtboxShape(e.hurtbox);
-            const overlapping = e.aggro && now >= e.nextAttackAt && batHurt && playerHurtShape && hurtShapesOverlap(batHurt, playerHurtShape);
-            if (overlapping) {
+            e.followTargetY = followTargetY;
+            const verticallyAligned = e.aggro && Math.abs(e.y - followTargetY) <= BAT_VERTICAL_EPS;
+            const contactPreview = computeBatContactShape(e);
+            const contactOverlap = verticallyAligned && contactPreview && playerHurtShape && hurtShapesOverlap(contactPreview, playerHurtShape);
+            if (e.aggro && now >= e.nextAttackAt && contactOverlap) {
               e.state = 'attack';
               e.attackStartedAt = now;
               e.attackDidDamage = false;
@@ -2544,7 +2582,7 @@
             const attackDef = BAT_ATTACK_DATA.contact;
             const attackMeta = e.mgr.attack;
             const frames = attackMeta?.frames ?? 12;
-            const animDuration = attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : (attackDef.durationMs ?? 160);
+            const animDuration = attackMeta ? (attackMeta.frames / attackMeta.fps) * 1000 : (attackDef.durationMs ?? 140);
             if (!e.attackStartedAt) e.attackStartedAt = now;
             const elapsed = Math.max(0, now - e.attackStartedAt);
             const animT = animDuration > 0 ? Math.min(1, elapsed / animDuration) : 1;
@@ -2557,7 +2595,10 @@
             if (Math.abs(dx) > 0.02) {
               e.facing = dx >= 0 ? 1 : -1;
             }
-            if (inActiveWindow && !e.attackHitbox && !e.attackDidDamage) {
+            const verticallyAligned = Math.abs(e.y - followTargetY) <= BAT_VERTICAL_EPS;
+            const contactPreview = computeBatContactShape(e, attackDef);
+            const contactOverlap = contactPreview && playerHurtShape && hurtShapesOverlap(contactPreview, playerHurtShape);
+            if (inActiveWindow && !e.attackHitbox && !e.attackDidDamage && verticallyAligned && contactOverlap) {
               const remainingFrames = Math.max(1, BAT_ATTACK_ACTIVE_FRAMES.end - frameIndex + 1);
               const durationMs = Math.max(attackDef.durationMs ?? 60, frameDuration * remainingFrames);
               const hitbox = spawnBatHitbox(e, attackDef, {
