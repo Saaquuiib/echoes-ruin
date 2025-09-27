@@ -962,7 +962,11 @@
         sprite.stopAnimation();
         sprite.isVisible = true;
         sprite.invertU = facing < 0;
-        sprite.position.x = x + (facing < 0 ? -appliedSize * 0.25 : appliedSize * 0.25);
+        if (pool.name === 'fx_hit') {
+          sprite.position.x = x + (facing < 0 ? -appliedSize * 0.25 : appliedSize * 0.25);
+        } else {
+          sprite.position.x = x;
+        }
         sprite.position.y = y;
         sprite.position.z = baseZ + pool.zOffset;
         const group = renderGroupId != null ? renderGroupId : pool.renderGroupId;
