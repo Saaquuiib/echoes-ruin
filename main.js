@@ -92,6 +92,7 @@
   }
 
   const SPRITE_FLASH_DURATION_MS = 100;
+  const SPRITE_FLASH_RESET_MS = 16;
   const SPRITE_FLASH_INTENSITY = 25;
   const SpriteFlash = (() => {
     const states = new Map();
@@ -124,14 +125,25 @@
       if (!sprite || spriteDisposed(sprite)) return;
       let entry = states.get(sprite);
       const base = entry?.baseColor ? cloneColor(entry.baseColor) : cloneColor(sprite.color);
+      const intensity = entry?.intensity ?? SPRITE_FLASH_INTENSITY;
+      const resetMs = Math.max(0, SPRITE_FLASH_RESET_MS);
       if (!entry) {
-        entry = { baseColor: base, until: now + durationMs, intensity: SPRITE_FLASH_INTENSITY };
+        entry = {
+          baseColor: base,
+          intensity,
+          flashStart: now,
+          until: now + durationMs
+        };
         states.set(sprite, entry);
-      } else {
-        entry.baseColor = base;
-        entry.until = now + durationMs;
+        applyFlash(sprite, entry);
+        return;
       }
-      applyFlash(sprite, entry);
+
+      entry.baseColor = base;
+      entry.intensity = intensity;
+      entry.flashStart = now + resetMs;
+      entry.until = entry.flashStart + durationMs;
+      sprite.color = cloneColor(base);
     }
 
     function update(now = performance.now()) {
@@ -142,7 +154,13 @@
           continue;
         }
         if (now < entry.until) {
-          applyFlash(sprite, entry);
+          const base = cloneColor(entry.baseColor);
+          const flashStart = entry.flashStart ?? entry.until - SPRITE_FLASH_DURATION_MS;
+          if (now < flashStart) {
+            sprite.color = base;
+          } else {
+            applyFlash(sprite, entry);
+          }
         } else {
           const base = cloneColor(entry.baseColor);
           sprite.color = base;
