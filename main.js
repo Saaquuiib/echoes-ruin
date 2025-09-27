@@ -531,7 +531,7 @@
 
     // World objects
     const shrines = [];
-    const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
+    const campfireMeta = { url: 'assets/sprites/Props/Campfire/CampFire.png', frames: 5, fps: 8 };
     let campfireMgr = null;
     let campfireSizeUnits = 1;
     const respawnKey = 'eotr_respawn';
@@ -842,7 +842,7 @@
       loop: true
     };
 
-    const HEAL_FX_META = { url: 'assets/sprites/Heal/heal.png', frames: 6, fps: 6.6667 };
+    const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
     const healFlash = {
@@ -1871,15 +1871,15 @@
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           dead: false, combat: null, hurtbox: null
         };
-        await loadEnemySheet(e, 'run', 'assets/sprites/wolf/Run.png', 14, true, true);
-        await loadEnemySheet(e, 'ready', 'assets/sprites/wolf/Ready.png', 12, true);
-        await loadEnemySheet(e, 'bite', 'assets/sprites/wolf/Bite.png', 12, false, true);
-        await loadEnemySheet(e, 'claw', 'assets/sprites/wolf/Claw.png', 12, false, true);
-        await loadEnemySheet(e, 'hit', 'assets/sprites/wolf/Hit.png', 12, false, true);
-        await loadEnemySheet(e, 'dead', 'assets/sprites/wolf/Dead.png', 12, false, true);
-        await loadEnemySheet(e, 'jumpUp', 'assets/sprites/wolf/JumpUp.png', 14, false);
-        await loadEnemySheet(e, 'jumpMid', 'assets/sprites/wolf/JumpMid.png', 14, false);
-        await loadEnemySheet(e, 'jumpDown', 'assets/sprites/wolf/JumpDown.png', 14, false);
+        await loadEnemySheet(e, 'run', 'assets/sprites/Mobs/wolf/Run.png', 14, true, true);
+        await loadEnemySheet(e, 'ready', 'assets/sprites/Mobs/wolf/Ready.png', 12, true);
+        await loadEnemySheet(e, 'bite', 'assets/sprites/Mobs/wolf/Bite.png', 12, false, true);
+        await loadEnemySheet(e, 'claw', 'assets/sprites/Mobs/wolf/Claw.png', 12, false, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/Mobs/wolf/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/Mobs/wolf/Dead.png', 12, false, true);
+        await loadEnemySheet(e, 'jumpUp', 'assets/sprites/Mobs/wolf/JumpUp.png', 14, false);
+        await loadEnemySheet(e, 'jumpMid', 'assets/sprites/Mobs/wolf/JumpMid.png', 14, false);
+        await loadEnemySheet(e, 'jumpDown', 'assets/sprites/Mobs/wolf/JumpDown.png', 14, false);
         e.y = centerFromFoot(e, footY);
         e.nextComboAt = performance.now() + 600;
         setEnemyAnim(e, 'run');
@@ -1990,12 +1990,12 @@
           stoopProgress: 0,
           hoverReturnActive: false
         };
-        await loadEnemySheet(e, 'sleep', 'assets/sprites/bat/Sleep.png', 1, true, true);
-        await loadEnemySheet(e, 'wake', 'assets/sprites/bat/WakeUp.png', 12, false, true);
-        await loadEnemySheet(e, 'fly', 'assets/sprites/bat/Flying.png', 12, true, true);
-        await loadEnemySheet(e, 'attack', 'assets/sprites/bat/Attack.png', 12, false, true);
-        await loadEnemySheet(e, 'hit', 'assets/sprites/bat/Hit.png', 12, false, true);
-        await loadEnemySheet(e, 'dead', 'assets/sprites/bat/Dead.png', 12, false, true);
+        await loadEnemySheet(e, 'sleep', 'assets/sprites//Mobs/bat/Sleep.png', 1, true, true);
+        await loadEnemySheet(e, 'wake', 'assets/sprites/Mobs/bat/WakeUp.png', 12, false, true);
+        await loadEnemySheet(e, 'fly', 'assets/sprites/Mobs/bat/Flying.png', 12, true, true);
+        await loadEnemySheet(e, 'attack', 'assets/sprites/Mobs/bat/Attack.png', 12, false, true);
+        await loadEnemySheet(e, 'hit', 'assets/sprites/Mobs/bat/Hit.png', 12, false, true);
+        await loadEnemySheet(e, 'dead', 'assets/sprites/Mobs/bat/Dead.png', 12, false, true);
         e.y = centerFromFoot(e, footY);
         e.anchor.x = e.x;
         e.anchor.y = e.y;
