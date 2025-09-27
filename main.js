@@ -114,8 +114,6 @@
     function registerActor(config = {}) {
       const id = config.id || `actor_${actorSeq++}`;
       if (actors.has(id)) throw new Error(`Combat actor id "${id}" already exists.`);
-      const basePoise = config.poiseMax ?? config.poiseThreshold ?? config.maxPoise ?? 0;
-      const initialPoise = config.initialPoise ?? (basePoise > 0 ? basePoise : 0);
       const actor = {
         id,
         team: config.team || 'neutral',
@@ -123,14 +121,6 @@
         hp: config.hp ?? config.hpMax ?? config.maxHp ?? 0,
         getOrigin: config.getPosition || config.getOrigin || (() => ({ x: 0, y: 0 })),
         getFacing: config.getFacing || (() => 1),
-        poiseThreshold: basePoise,
-        poiseMax: basePoise,
-        poise: Math.max(0, Math.min(initialPoise, basePoise || initialPoise)),
-        poiseResetDelayMs: config.poiseResetDelayMs ?? 1200,
-        poiseRegenPerSec: config.poiseRegenPerSec ?? 0,
-        staggerDurationMs: config.staggerDurationMs ?? 600,
-        staggeredUntil: 0,
-        lastPoiseDamageAt: 0,
         invulnFlags: new Map(),
         hurtboxes: new Map(),
         alive: true,
@@ -140,9 +130,6 @@
         onDamage: config.onDamage || null,
         onHealthChange: config.onHealthChange || null,
         onDeath: config.onDeath || null,
-        onPoiseChange: config.onPoiseChange || null,
-        onStagger: config.onStagger || null,
-        onStaggerEnd: config.onStaggerEnd || null,
         data: config.data || {},
         meta: config.meta || {}
       };
@@ -243,12 +230,10 @@
         getFacing: config.getFacing || null,
         absolute: !!config.absolute,
         damage: config.damage ?? 0,
-        poise: config.poise ?? config.stagger ?? 0,
         pierce: !!config.pierce,
         friendlyFire: !!config.friendlyFire,
         ignoreInvuln: !!config.ignoreInvuln,
         applyDamage: config.applyDamage !== undefined ? !!config.applyDamage : true,
-        applyPoise: config.applyPoise !== undefined ? !!config.applyPoise : true,
         activateAt: now + delay,
         expiresAt: now + delay + duration,
         durationMs: duration,
@@ -352,23 +337,6 @@
       return true;
     }
 
-    function applyPoise(actor, event, now) {
-      const amount = Math.max(0, event.poise || 0);
-      if (amount <= 0 || actor.poiseMax <= 0 || !actor.alive) return false;
-      const prev = actor.poise;
-      actor.poise = Math.max(0, prev - amount);
-      actor.lastPoiseDamageAt = now;
-      let broke = false;
-      if (actor.poise <= 0 && actor.poiseMax > 0 && actor.staggeredUntil <= now) {
-        actor.staggeredUntil = now + actor.staggerDurationMs;
-        broke = true;
-        event.staggered = true;
-        if (actor.onStagger) actor.onStagger(event);
-      }
-      if (actor.onPoiseChange) actor.onPoiseChange(actor.poise, event);
-      return broke || actor.poise !== prev;
-    }
-
     function setInvulnerable(actorRef, tag = 'default', enabled = true, durationMs = 0) {
       const actor = resolveActor(actorRef);
       if (!actor) return;
@@ -398,32 +366,6 @@
       for (const actor of activeActors) {
         actorInvulnerable(actor, now);
         if (!actor.alive) continue;
-        if (actor.staggeredUntil > 0 && now >= actor.staggeredUntil) {
-          actor.staggeredUntil = 0;
-          if (actor.poiseMax > 0 && actor.poise < actor.poiseMax) {
-            const prev = actor.poise;
-            actor.poise = actor.poiseMax;
-            actor.lastPoiseDamageAt = now;
-            if (actor.poise !== prev && actor.onPoiseChange) {
-              actor.onPoiseChange(actor.poise, { actor, now, refill: true });
-            }
-          }
-          if (actor.onStaggerEnd) actor.onStaggerEnd({ actor, now });
-        }
-        if (actor.poiseMax > 0 && actor.poise < actor.poiseMax && actor.staggeredUntil <= 0) {
-          const elapsed = now - actor.lastPoiseDamageAt;
-          if (actor.poiseResetDelayMs <= 0 || elapsed >= actor.poiseResetDelayMs) {
-            const prev = actor.poise;
-            if (actor.poiseRegenPerSec > 0) {
-              actor.poise = Math.min(actor.poiseMax, actor.poise + actor.poiseRegenPerSec * dt);
-            } else {
-              actor.poise = actor.poiseMax;
-            }
-            if (actor.poise !== prev && actor.onPoiseChange) {
-              actor.onPoiseChange(actor.poise, { actor, now, regen: true });
-            }
-          }
-        }
       }
 
       const hurtList = Array.from(hurtboxes.values());
@@ -455,17 +397,13 @@
             hurtbox,
             firstHit: hitbox.hitCount === 0,
             applyDamage: hitbox.applyDamage,
-            applyPoise: hitbox.applyPoise,
             handled: false,
             cancelled: false,
             meta: hitbox.meta || null,
             damage: 0,
-            poise: 0,
-            damageApplied: false,
-            poiseApplied: false
+            damageApplied: false
           };
           event.damage = typeof hitbox.damage === 'function' ? hitbox.damage(event) : (hitbox.damage || 0);
-          event.poise = typeof hitbox.poise === 'function' ? hitbox.poise(event) : (hitbox.poise || 0);
 
           if (hurtbox.actor.processHit) {
             hurtbox.actor.processHit(event);
@@ -479,16 +417,11 @@
             continue;
           }
 
-          if (!event.handled) {
-            if (event.applyDamage) {
-              event.damageApplied = applyDamage(hurtbox.actor, event) || event.damageApplied;
-            }
-            if (event.applyPoise) {
-              event.poiseApplied = applyPoise(hurtbox.actor, event, now) || event.poiseApplied;
-            }
+          if (!event.handled && event.applyDamage) {
+            event.damageApplied = applyDamage(hurtbox.actor, event) || event.damageApplied;
           }
 
-          event.hitLanded = event.damageApplied || event.poiseApplied || event.handled;
+          event.hitLanded = event.damageApplied || event.handled;
           if (hurtbox.actor.onPostHit) hurtbox.actor.onPostHit(event);
           if (hitbox.onHit && event.hitLanded) hitbox.onHit(event);
 
@@ -756,10 +689,10 @@
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
-      lightDamage: 12, lightStagger: 0.32,
-      lightFinisherDamage: 16, lightFinisherStagger: 0.45,
-      heavyDamage: 30, heavyStagger: 0.6,
-      heavyChargeBonusDamage: 12, heavyChargeBonusStagger: 0.2,
+      lightDamage: 12,
+      lightFinisherDamage: 16,
+      heavyDamage: 30,
+      heavyChargeBonusDamage: 12,
       flaskCount: 3, flaskHealPct: 0.55, flaskSip: 0.9, flaskRollCancel: 0.5, flaskLock: 0, flaskMax: 3
     };
     const state = {
@@ -793,7 +726,6 @@
         if (state.dead) { event.cancelled = true; return; }
         if (state.blocking) {
           event.applyDamage = false;
-          event.applyPoise = false;
           event.handled = true;
           event.blocked = true;
         }
@@ -909,10 +841,8 @@
       hitApplied: false,
       hitMeta: null,
       releaseDamage: 0,
-      releaseStagger: 0,
       lastHoldMs: 0,
-      lastDamage: 0,
-      lastStagger: 0
+      lastDamage: 0
     };
     const PLAYER_ATTACKS = {
       light1: {
@@ -921,7 +851,6 @@
         height: 1.2,
         offset: { x: 0.85, y: 0 },
         damage: () => stats.lightDamage,
-        poise: () => stats.lightStagger,
         durationMs: 110,
         hitFrac: 0.42,
         hitstopMs: HITSTOP_LIGHT_MS,
@@ -934,7 +863,6 @@
         height: 1.2,
         offset: { x: 0.9, y: 0 },
         damage: () => stats.lightDamage,
-        poise: () => stats.lightStagger,
         durationMs: 110,
         hitFrac: 0.42,
         hitstopMs: HITSTOP_LIGHT_MS,
@@ -947,7 +875,6 @@
         height: 1.25,
         offset: { x: 1.0, y: 0 },
         damage: () => stats.lightFinisherDamage ?? stats.lightDamage,
-        poise: () => stats.lightFinisherStagger ?? stats.lightStagger,
         durationMs: 120,
         hitFrac: 0.48,
         hitstopMs: HITSTOP_LIGHT_MS + 10,
@@ -960,7 +887,6 @@
         height: 1.3,
         offset: { x: 1.1, y: 0 },
         damage: () => heavy.releaseDamage,
-        poise: () => heavy.releaseStagger,
         durationMs: 140,
         hitFrac: HEAVY_HIT_FRAC,
         hitstopMs: () => HITSTOP_HEAVY_MS + (heavy.charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0),
@@ -1169,10 +1095,6 @@
         meta.damage,
         typeof attackDef.damage === 'function' ? attackDef.damage(meta) : attackDef.damage || 0
       );
-      const poiseVal = resolve(
-        meta.stagger ?? meta.poise,
-        typeof attackDef.poise === 'function' ? attackDef.poise(meta) : attackDef.poise || 0
-      );
       const durationMs = resolve(meta.durationMs, attackDef.durationMs ?? 0);
       const offset = meta.offset || attackDef.offset || { x: 0, y: 0 };
       const width = meta.width != null ? meta.width : attackDef.width ?? attackDef.size?.width ?? 0;
@@ -1202,7 +1124,6 @@
         offset,
         durationMs,
         damage: damageVal,
-        poise: poiseVal,
         pierce,
         friendlyFire,
         meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
@@ -1504,7 +1425,6 @@
           hitFrac: 0.46,
           durationMs: 190,
           damage: 12,
-          poise: 14,
           width: e => e.sizeUnits * 0.54,
           height: e => e.sizeUnits * 0.42,
           offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
@@ -1519,7 +1439,6 @@
           hitFrac: 0.5,
           durationMs: 200,
           damage: 15,
-          poise: 16,
           width: e => e.sizeUnits * 0.6,
           height: e => e.sizeUnits * 0.5,
           offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
@@ -1546,7 +1465,6 @@
           hitFrac: 0.45,
           durationMs: 160,
           damage: 9,
-          poise: 9,
           width: e => e.sizeUnits * 0.66,
           height: e => e.sizeUnits * 0.46,
           offset: e => ({ x: e.sizeUnits * 0.18, y: -e.sizeUnits * 0.08 }),
@@ -1641,7 +1559,6 @@
           offset,
           durationMs: def.durationMs ?? 130,
           damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
-          poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
           getOrigin: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           meta: { enemy: 'wolf', attack: e.currentAttack?.name || 'unknown' }
@@ -1742,7 +1659,6 @@
           offset,
           durationMs: duration,
           damage: typeof def.damage === 'function' ? def.damage(e) : def.damage ?? 0,
-          poise: typeof def.poise === 'function' ? def.poise(e) : def.poise ?? 0,
           getOrigin,
           getFacing: () => e.facing,
           meta: { enemy: 'bat', attack: 'contact' },
@@ -1884,12 +1800,11 @@
           type: 'wolf', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
           onGround: true, anim: '', patrolMin: minX, patrolMax: maxX, dir: 1,
           gravity: -20, baselineUnits: 0, sizeUnits: 1,
-          hpMax: 38, hp: 38, poiseThreshold: 25, poise: 25,
+          hpMax: 38, hp: 38,
           state: 'patrol', playerSeen: false, packRole: 'support',
           attackQueue: [], comboIndex: 0, currentAttack: null,
           attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
           nextComboAt: 0, leapState: null, hitReactUntil: 0,
-          staggered: false, staggerUntil: 0,
           pendingLandingState: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
@@ -1926,18 +1841,13 @@
           team: 'enemy',
           hpMax: e.hpMax,
           hp: e.hpMax,
-          poiseThreshold: e.poiseThreshold,
-          staggerDurationMs: 620,
-          poiseResetDelayMs: 1600,
-          poiseRegenPerSec: 18,
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
-          onPoiseChange: (poise) => { e.poise = poise; },
           onDamage: (event) => {
             const now = performance.now();
             e.lastHitAt = now;
-            if (e.dying || e.dead || event?.staggered) return;
+            if (e.dying || e.dead) return;
             e.attackQueue = [];
             e.comboIndex = 0;
             e.currentAttack = null;
@@ -1958,34 +1868,6 @@
             e.stateUntil = e.hitReactUntil;
             e.nextComboAt = Math.max(e.nextComboAt, now + 600);
             if (e.mgr.hit) setEnemyAnim(e, 'hit');
-          },
-          onStagger: () => {
-            const now = performance.now();
-            e.staggered = true;
-            e.staggerUntil = combatActor.staggeredUntil;
-            e.attackQueue = [];
-            e.comboIndex = 0;
-            e.currentAttack = null;
-            e.readyUntil = 0;
-            e.attackHitAt = 0;
-            e.attackEndAt = 0;
-            if (e.state === 'leap' && !e.onGround) {
-              e.pendingLandingState = { type: 'stagger', until: combatActor.staggeredUntil };
-              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
-              return;
-            }
-            e.vx = 0; e.vy = 0;
-            e.state = 'stagger';
-            if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            e.nextComboAt = Math.max(e.nextComboAt, now + 600);
-          },
-          onStaggerEnd: ({ now }) => {
-            e.staggered = false;
-            e.staggerUntil = 0;
-            e.state = 'recover';
-            e.stateUntil = now + 320;
-            e.nextComboAt = Math.max(e.nextComboAt, now + 720);
-            if (e.mgr.ready) setEnemyAnim(e, 'ready');
           },
           onDeath: () => {
             if (e.dead || e.dying) return;
@@ -2027,12 +1909,11 @@
           type: 'bat', mgr: {}, x, y: 0, vx: 0, vy: 0, facing: 1,
           anim: 'sleep', state: 'sleep', patrolMin: minX, patrolMax: maxX, dir: 1,
           hover: footY, baselineUnits: 0, sizeUnits: 1, bob: 0,
-          hpMax: 22, hp: 22, poiseThreshold: 10, poise: 10,
+          hpMax: 22, hp: 22,
           nextAttackAt: 0, attackHitAt: 0, attackEndAt: 0,
           attackHitbox: null, attackDidDamage: false, attackStartedAt: 0,
           homeX: x, hitReactUntil: 0,
           awakened: false,
-          staggered: false, staggerUntil: 0,
           pendingLandingState: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
@@ -2078,18 +1959,13 @@
           team: 'enemy',
           hpMax: e.hpMax,
           hp: e.hpMax,
-          poiseThreshold: e.poiseThreshold,
-          staggerDurationMs: 520,
-          poiseResetDelayMs: 1400,
-          poiseRegenPerSec: 14,
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           onHealthChange: (hp) => { e.hp = hp; },
-          onPoiseChange: (poise) => { e.poise = poise; },
           onDamage: (event) => {
             const now = performance.now();
             e.lastHitAt = now;
-            if (e.dying || e.dead || event?.staggered) return;
+            if (e.dying || e.dead) return;
             e.hitReactUntil = now + 220;
             e.animLockUntil = e.hitReactUntil;
             e.animLockName = 'hit';
@@ -2099,35 +1975,6 @@
               e.attackHitbox = null;
             }
             e.nextAttackAt = Math.max(e.nextAttackAt, now + 480);
-            e.attackDidDamage = false;
-            e.attackStartedAt = 0;
-          },
-          onStagger: () => {
-            const now = performance.now();
-            e.staggered = true;
-            e.staggerUntil = combatActor.staggeredUntil;
-            e.state = 'stagger';
-            e.vx = 0; e.vy = 0;
-            e.animLockUntil = combatActor.staggeredUntil;
-            e.animLockName = 'hit';
-            if (e.mgr.hit) setEnemyAnim(e, 'hit', { preserveAnchor: true, force: true });
-            if (e.attackHitbox) {
-              e.attackHitbox.markRemove = true;
-              e.attackHitbox = null;
-            }
-            e.nextAttackAt = Math.max(e.nextAttackAt, now + 720);
-            e.attackDidDamage = false;
-            e.attackStartedAt = 0;
-          },
-          onStaggerEnd: ({ now }) => {
-            e.staggered = false;
-            e.staggerUntil = 0;
-            e.state = 'fly';
-            e.awakened = true;
-            e.animLockUntil = 0;
-            e.animLockName = null;
-            if (e.mgr.fly) setEnemyAnim(e, 'fly', { preserveAnchor: true, force: true });
-            e.nextAttackAt = now + 520;
             e.attackDidDamage = false;
             e.attackStartedAt = 0;
           },
@@ -2297,7 +2144,6 @@
             }
             break;
           }
-          case 'stagger':
           case 'hit': {
             e.vx = 0;
             e.vy = 0;
@@ -2341,15 +2187,6 @@
               e.stateUntil = e.hitReactUntil;
               e.nextComboAt = Math.max(e.nextComboAt, now + 600);
               if (e.mgr.hit) setEnemyAnim(e, 'hit');
-            } else if (pending.type === 'stagger') {
-              e.vx = 0;
-              e.vy = 0;
-              e.state = 'stagger';
-              e.staggered = true;
-              e.staggerUntil = pending.until || (now + 400);
-              e.stateUntil = e.staggerUntil;
-              e.nextComboAt = Math.max(e.nextComboAt, now + 600);
-              if (e.mgr.hit) setEnemyAnim(e, 'hit');
             } else if (pending.type === 'dead') {
               finalizeWolfDeath(e, now);
             }
@@ -2390,7 +2227,7 @@
       }
 
       function batShouldPreserveAnchor(state) {
-        return state === 'fly' || state === 'attack' || state === 'stagger' || state === 'hit';
+        return state === 'fly' || state === 'attack' || state === 'hit';
       }
 
       function batSetDesiredAnim(e, name, opts = {}) {
@@ -2719,12 +2556,6 @@
             }
             break;
           }
-          case 'stagger': {
-            batSetDesiredAnim(e, 'hit', { preserveAnchor: true });
-            e.vx = 0;
-            e.vy = 0;
-            break;
-          }
           case 'hit': {
             batSetDesiredAnim(e, 'hit', { preserveAnchor: true });
             break;
@@ -2780,7 +2611,7 @@
               lbl.ctx.font = '16px monospace';
               const status = e.dead ? 'dead' : (e.state || e.anim);
               lbl.ctx.fillText(status, 2, 18);
-              const hpLine = `HP:${Math.max(0, Math.round(e.hp ?? 0)).toString().padStart(3)} PO:${Math.max(0, Math.round(e.poise ?? 0)).toString().padStart(2)}`;
+              const hpLine = `HP:${Math.max(0, Math.round(e.hp ?? 0)).toString().padStart(3)}`;
               const hpY = Math.min(texH - 14, 34);
               lbl.ctx.fillText(hpLine, 2, hpY);
               if (e.packRole) {
@@ -2901,7 +2732,6 @@
       heavy.hitApplied = false;
       heavy.hitMeta = null;
       heavy.releaseDamage = 0;
-      heavy.releaseStagger = 0;
       combo.pendingHit = false;
       combo.hitMeta = null;
       combo.hitAt = 0;
@@ -2933,7 +2763,6 @@
       heavy.hitApplied = false;
       heavy.hitMeta = null;
       heavy.releaseDamage = stats.heavyDamage;
-      heavy.releaseStagger = stats.heavyStagger;
       if (playerSprite.mgr.heavy) {
         setAnim('heavy', false, { play: false, frame: 0, manualDuration: 0 });
       }
@@ -2958,10 +2787,8 @@
       state.flasking = false;
       heavy.charged = holdMs >= HEAVY_CHARGE_MIN_MS;
       heavy.releaseDamage = stats.heavyDamage + (heavy.charged ? stats.heavyChargeBonusDamage : 0);
-      heavy.releaseStagger = stats.heavyStagger + (heavy.charged ? stats.heavyChargeBonusStagger : 0);
       heavy.lastHoldMs = holdMs;
       heavy.lastDamage = heavy.releaseDamage;
-      heavy.lastStagger = heavy.releaseStagger;
       if (playerSprite.mgr.heavy) setAnim('heavy', false);
       const releaseStart = performance.now();
       const animDur = playerSprite.animDurationMs;
@@ -2975,8 +2802,7 @@
         hitstopMs: HITSTOP_HEAVY_MS + (heavy.charged ? HITSTOP_HEAVY_CHARGED_BONUS_MS : 0),
         shakeMagnitude: CAMERA_SHAKE_MAG * (heavy.charged ? 1.4 : 1.0),
         shakeDurationMs: CAMERA_SHAKE_DURATION_MS * (heavy.charged ? 1.2 : 1),
-        damage: heavy.releaseDamage,
-        stagger: heavy.releaseStagger
+        damage: heavy.releaseDamage
       };
       actionEndAt = releaseStart + animDur;
       if (!heavy.pendingHit && heavy.hitMeta) {
@@ -3059,7 +2885,6 @@
       const heavyHoldMs = heavy.charging ? heavy.chargeHoldMs : heavy.lastHoldMs;
       const heavyHoldSec = heavyHoldMs / 1000;
       const heavyDmg = heavy.releasing ? heavy.releaseDamage : (heavy.lastDamage || stats.heavyDamage);
-      const heavyStag = heavy.releasing ? heavy.releaseStagger : (heavy.lastStagger || stats.heavyStagger);
       const heavyChargedDisplay = heavy.charging ? heavy.charged : (heavy.lastHoldMs >= HEAVY_CHARGE_MIN_MS && heavy.lastHoldMs > 0);
       const hitstopMs = hitstopRemaining(now);
       overlayEl.textContent =
@@ -3069,7 +2894,7 @@
         `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
         `Block:${state.blocking}  ParryOpen:${state.parryOpen} (${parryRemain.toFixed(0)}ms)\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
-        `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)} stag:${heavyStag.toFixed(2)}\n` +
+        `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)}\n` +
         `Hitstop:${hitstopMs.toFixed(0)}ms  CamShake:${cameraShake.enabled} (active:${cameraShake.active})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
         `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, tap I=Parry, hold I=Block, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
