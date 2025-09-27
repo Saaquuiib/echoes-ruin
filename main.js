@@ -1522,6 +1522,8 @@
       const BAT_STOOP_OUT_RATE = 1.5;
       const BAT_TORSO_ALIGN_FRAC = 0.12;
       const BAT_TORSO_ALIGN_MIN = 0.06;
+      const BAT_TORSO_ALIGN_TIGHT_FRAC = 0.05;
+      const BAT_TORSO_ALIGN_TIGHT_MIN = 0.03;
       const BAT_ATTACK_ALIGN_X_FRAC = 0.3;
       const BAT_ATTACK_ALIGN_MIN = 0.18;
 
@@ -2387,7 +2389,11 @@
         const fallbackDim = heroSize > 0 ? heroSize * 0.5 : e.sizeUnits * 0.5;
         const heroHurtHeight = playerHurtShape?.height ?? fallbackDim;
         const heroHurtWidth = playerHurtShape?.width ?? fallbackDim;
-        const torsoBandHalf = Math.max(BAT_TORSO_ALIGN_MIN, heroHurtHeight * BAT_TORSO_ALIGN_FRAC);
+        const torsoAlignLoose = Math.max(BAT_TORSO_ALIGN_MIN, heroHurtHeight * BAT_TORSO_ALIGN_FRAC);
+        const torsoAlignTolerance = Math.min(
+          torsoAlignLoose,
+          Math.max(BAT_TORSO_ALIGN_TIGHT_MIN, heroHurtHeight * BAT_TORSO_ALIGN_TIGHT_FRAC)
+        );
         const horizontalAlignWindow = Math.max(BAT_ATTACK_ALIGN_MIN, heroHurtWidth * BAT_ATTACK_ALIGN_X_FRAC);
         const detectionDist = Math.hypot(playerX - e.x, playerY - e.y);
         if (e.dead) {
@@ -2493,15 +2499,12 @@
             const minCenter = centerFromFoot(e, -0.1);
             const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
             const bobValue = e.aggro ? 0 : Math.sin(e.bob) * 0.35;
-            const stoopAmount = e.stoopProgress ?? 0;
             const targetX = e.aggro
               ? Math.max(clampMin, Math.min(clampMax, playerX))
               : Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
             const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobValue)));
-            const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, heroTorsoY));
-            const desiredCenter = e.aggro
-              ? idleCenter + (pursuitCenter - idleCenter) * stoopAmount
-              : idleCenter;
+            const torsoTarget = Math.max(minCenter, Math.min(maxCenter, heroTorsoY));
+            const desiredCenter = e.aggro ? torsoTarget : idleCenter;
             const toX = targetX - e.x;
             const maxSpeed = e.aggro ? BAT_FOLLOW_SPEED : BAT_RETURN_SPEED;
             let desiredVX = 0;
@@ -2513,17 +2516,13 @@
             e.vx += (desiredVX - e.vx) * blend;
             e.x += e.vx * dt;
             const prevY = e.y;
-            if (e.aggro) {
-              const dy = desiredCenter - e.y;
-              const framesEquivalent = Math.max(0, dt * 60);
-              const lerpFactor = Math.max(0, Math.min(1, 1 - Math.pow(1 - BAT_VERTICAL_LERP, framesEquivalent)));
-              const desiredStep = dy * lerpFactor;
-              const maxStep = BAT_VERTICAL_MAX_SPEED * dt;
-              const step = Math.sign(desiredStep) * Math.min(Math.abs(desiredStep), maxStep);
-              e.y += step;
-            } else {
-              e.y = desiredCenter;
-            }
+            const dy = desiredCenter - e.y;
+            const framesEquivalent = Math.max(0, dt * 60);
+            const lerpFactor = Math.max(0, Math.min(1, 1 - Math.pow(1 - BAT_VERTICAL_LERP, framesEquivalent)));
+            const desiredStep = dy * lerpFactor;
+            const maxStep = BAT_VERTICAL_MAX_SPEED * dt;
+            const step = Math.sign(desiredStep) * Math.min(Math.abs(desiredStep), maxStep);
+            e.y += step;
             if (dt > 0) {
               e.vy = (e.y - prevY) / dt;
             } else {
@@ -2552,11 +2551,10 @@
               e.facing = dxNow >= 0 ? 1 : -1;
             }
             const attackCircle = computeBatAttackCircle(e);
-            const torsoAligned = Math.abs(e.y - heroTorsoY) <= torsoBandHalf;
+            const torsoAligned = Math.abs(e.y - heroTorsoY) <= torsoAlignTolerance;
             const horizontalAligned = Math.abs(dxNow) <= horizontalAlignWindow;
             const contactReady = attackCircle && playerHurtShape && hurtShapesOverlap(attackCircle, playerHurtShape);
-            const stoopReady = torsoAligned || (stoopAmount >= 0.95 && Math.abs(e.y - heroTorsoY) <= torsoBandHalf * 1.5);
-            const canAttack = e.aggro && now >= e.nextAttackAt && stoopReady && horizontalAligned && contactReady;
+            const canAttack = e.aggro && now >= e.nextAttackAt && torsoAligned && horizontalAligned && contactReady;
             if (canAttack) {
               e.state = 'attack';
               e.attackStartedAt = now;
@@ -2612,7 +2610,7 @@
               e.facing = dxNow >= 0 ? 1 : -1;
             }
             const attackCircle = computeBatAttackCircle(e, attackDef);
-            const torsoAligned = Math.abs(e.y - heroTorsoY) <= torsoBandHalf;
+            const torsoAligned = Math.abs(e.y - heroTorsoY) <= torsoAlignTolerance;
             const horizontalAligned = Math.abs(dxNow) <= horizontalAlignWindow;
             const contactReady = attackCircle && playerHurtShape && hurtShapesOverlap(attackCircle, playerHurtShape);
             const attackReadyNow = torsoAligned && horizontalAligned && contactReady;
