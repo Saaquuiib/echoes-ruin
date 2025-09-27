@@ -624,8 +624,7 @@
       clearInvulnerability,
       isInvulnerable,
       update,
-      actors,
-      resolveActorSprite
+      actors
     };
   })();
 
@@ -1407,32 +1406,6 @@
       }
     }
 
-    function triggerPlayerAttackHitEffects(event) {
-      if (!event || !event.damageApplied) return;
-      const contact = event.contactPoint || event.hurtShape?.center || null;
-      if (contact) {
-        const baseSprite = playerSprite.sprite;
-        const basePos = baseSprite ? baseSprite.position : placeholder.position;
-        const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
-        const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
-          ? baseSprite.renderingGroupId
-          : null;
-        const facing = event.hitFacing ?? (state.facing >= 0 ? 1 : -1);
-        const scaleUnits = playerSprite.sizeUnits * HIT_FX_SCALE;
-        const posX = contact.x ?? (event.hurtShape ? event.hurtShape.center.x : basePos.x);
-        const posY = contact.y ?? (event.hurtShape ? event.hurtShape.center.y : basePos.y);
-        fxHit.spawn(posX, posY, scaleUnits, facing, baseZ, renderGroup, event.now);
-      }
-
-      if (event.target) {
-        const sprite = Combat.resolveActorSprite ? Combat.resolveActorSprite(event.target) : null;
-        if (sprite) {
-          const flashNow = event.now ?? performance.now();
-          SpriteFlash.trigger(sprite, flashNow);
-        }
-      }
-    }
-
     function onPlayerAttackLand(meta = {}) {
       if (!playerActor) return;
       const inferredId = meta.attackId || (meta.stage ? `light${meta.stage}` : null) || meta.type || 'light1';
@@ -1479,7 +1452,22 @@
         friendlyFire,
         meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
         onHit: (event) => {
-          triggerPlayerAttackHitEffects(event);
+          if (event.damageApplied) {
+            const contact = event.contactPoint || event.hurtShape?.center || null;
+            if (contact) {
+              const baseSprite = playerSprite.sprite;
+              const basePos = baseSprite ? baseSprite.position : placeholder.position;
+              const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+              const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+                ? baseSprite.renderingGroupId
+                : null;
+              const facing = event.hitFacing ?? (state.facing >= 0 ? 1 : -1);
+              const scaleUnits = playerSprite.sizeUnits * HIT_FX_SCALE;
+              const posX = contact.x ?? (event.hurtShape ? event.hurtShape.center.x : basePos.x);
+              const posY = contact.y ?? (event.hurtShape ? event.hurtShape.center.y : basePos.y);
+              fxHit.spawn(posX, posY, scaleUnits, facing, baseZ, renderGroup, event.now);
+            }
+          }
           if (event.firstHit && event.hitLanded) {
             applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs });
           }
