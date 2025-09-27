@@ -845,13 +845,18 @@
     };
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
-    const PARRY_FX_META = { url: 'assets/sprites/VFX/Parry FX.png', width: 170, height: 34 };
+    const PARRY_FX_META = { url: 'assets/sprites/VFX/Parry FX.png', frames: 5, fps: 41.6667, width: 170, height: 34 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
-    const parryReadyFx = {
+    const parryFx = {
       mgr: null,
       sprite: null,
       widthUnits: 0,
       heightUnits: 0,
+      frameW: 0,
+      frameH: 0,
+      animDuration: 0,
+      frames: 0,
+      fps: 0,
       activeUntil: 0
     };
     const HEAL_FX_FRONT_OFFSET = 0.01;
@@ -1194,39 +1199,49 @@
       return Math.max(0, heightUnits * 0.5);
     }
 
-    async function initParryReadyFx() {
-      const { ok, w, h } = await loadImage(PARRY_FX_META.url);
+    async function initParryFx() {
+      const { ok, w: sheetW, h: sheetH } = await loadImage(PARRY_FX_META.url);
       if (!ok) { console.warn('Parry FX sprite missing; skipping.'); return; }
-      const frameW = w || PARRY_FX_META.width;
-      const frameH = h || PARRY_FX_META.height;
-      parryReadyFx.widthUnits = frameW / PPU;
-      parryReadyFx.heightUnits = frameH / PPU;
-      const mgr = new BABYLON.SpriteManager('fx_parry_ready', PARRY_FX_META.url, 1,
+      const frames = Math.max(1, PARRY_FX_META.frames || 1);
+      const rawW = sheetW || (PARRY_FX_META.width ?? 0);
+      const rawH = sheetH || (PARRY_FX_META.height ?? 0);
+      const frameW = frames > 0 ? Math.floor(rawW / frames) : rawW;
+      const frameH = rawH;
+      if (!frameW || !frameH) { console.warn('Parry FX sprite has invalid dimensions; skipping.'); return; }
+      const fps = Math.max(1, PARRY_FX_META.fps || 30);
+      parryFx.widthUnits = frameW / PPU;
+      parryFx.heightUnits = frameH / PPU;
+      parryFx.frameW = frameW;
+      parryFx.frameH = frameH;
+      parryFx.frames = frames;
+      parryFx.fps = fps;
+      parryFx.animDuration = (frames / fps) * 1000;
+      const mgr = new BABYLON.SpriteManager('fx_parry', PARRY_FX_META.url, 1,
         { width: frameW, height: frameH }, scene);
       mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
       mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
       mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
-      parryReadyFx.mgr = mgr;
+      parryFx.mgr = mgr;
     }
 
-    function stopParryReadyFx() {
-      if (parryReadyFx.sprite) {
-        parryReadyFx.sprite.dispose();
-        parryReadyFx.sprite = null;
+    function stopParryFx() {
+      if (parryFx.sprite) {
+        parryFx.sprite.dispose();
+        parryFx.sprite = null;
       }
-      parryReadyFx.activeUntil = 0;
+      parryFx.activeUntil = 0;
     }
 
-    function playParryReadyFx(now = performance.now()) {
-      if (!parryReadyFx.mgr) return;
-      if (parryReadyFx.sprite) {
-        parryReadyFx.sprite.dispose();
+    function playParryFx(now = performance.now()) {
+      if (!parryFx.mgr) return;
+      if (parryFx.sprite) {
+        parryFx.sprite.dispose();
       }
-      const sp = new BABYLON.Sprite('fx_parry_ready_active', parryReadyFx.mgr);
-      const heightUnits = parryReadyFx.heightUnits || (parryReadyFx.widthUnits || 0);
+      const sp = new BABYLON.Sprite('fx_parry_active', parryFx.mgr);
+      const heightUnits = parryFx.heightUnits || (parryFx.widthUnits || 0);
       if (heightUnits > 0) sp.size = heightUnits;
-      if (parryReadyFx.widthUnits > 0) sp.width = parryReadyFx.widthUnits;
-      if (parryReadyFx.heightUnits > 0) sp.height = parryReadyFx.heightUnits;
+      if (parryFx.widthUnits > 0) sp.width = parryFx.widthUnits;
+      if (parryFx.heightUnits > 0) sp.height = parryFx.heightUnits;
       const playerSp = playerSprite.sprite;
       const basePos = playerSp ? playerSp.position : placeholder.position;
       const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z :
@@ -1239,13 +1254,17 @@
       if (playerSp && typeof playerSp.renderingGroupId === 'number') {
         sp.renderingGroupId = playerSp.renderingGroupId;
       }
-      parryReadyFx.sprite = sp;
-      parryReadyFx.activeUntil = now + PARRY_WINDOW_MS;
+      const from = 0;
+      const to = Math.max(0, parryFx.frames - 1);
+      const frameDuration = parryFx.fps > 0 ? 1000 / parryFx.fps : 1000 / 30;
+      sp.playAnimation(from, to, false, frameDuration);
+      parryFx.sprite = sp;
+      parryFx.activeUntil = now + (parryFx.animDuration || 0);
     }
 
-    function updateParryReadyFx(now) {
-      if (!parryReadyFx.sprite) return;
-      const sp = parryReadyFx.sprite;
+    function updateParryFx(now) {
+      if (!parryFx.sprite) return;
+      const sp = parryFx.sprite;
       const playerSp = playerSprite.sprite;
       const basePos = playerSp ? playerSp.position : placeholder.position;
       const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z :
@@ -1258,8 +1277,8 @@
       if (playerSp && typeof playerSp.renderingGroupId === 'number') {
         sp.renderingGroupId = playerSp.renderingGroupId;
       }
-      if (now >= parryReadyFx.activeUntil || !state.parryOpen) {
-        stopParryReadyFx();
+      if (parryFx.activeUntil && now >= parryFx.activeUntil) {
+        stopParryFx();
       }
     }
 
@@ -1480,7 +1499,7 @@
     }
       initPlayerSprite();
       initHealFx();
-      initParryReadyFx();
+      initParryFx();
       initHealFlash();
       spawnShrine(-2, 0);
 
@@ -2853,8 +2872,7 @@
 
       state.flasking = false;
       state.acting = true; // prevent the state machine from swapping parry out
-      if (playerSprite.mgr.parry) setAnim('parry', false);
-      playParryReadyFx(now);
+      stopParryFx();
       actionEndAt = now + PARRY_WINDOW_MS;
     }
 
@@ -2865,7 +2883,7 @@
       state.blocking = true;
       state.parryOpen = false;
       state.parryUntil = 0;
-      stopParryReadyFx();
+      stopParryFx();
       if (playerSprite.mgr.block) setAnim('block', true);
       // Blocking doesn't set acting; you can still move while holding block
     }
@@ -2955,20 +2973,22 @@
       event.parried = true;
       state.parryOpen = false;
       state.parryUntil = now;
-      stopParryReadyFx();
-      triggerParryFx(event.source);
+      stopParryFx();
+      if (playerSprite.mgr.parry) setAnim('parry', false);
+      triggerParryFx(event.source, now);
       applyParryStagger(event.source, now, PARRY_STAGGER_MS);
       if (playerSprite && playerSprite.animDurationMs) {
         actionEndAt = Math.max(actionEndAt || 0, now + playerSprite.animDurationMs);
       }
     }
 
-    function triggerParryFx(attackerActor) {
+    function triggerParryFx(attackerActor, now = performance.now()) {
       applyImpactEffects({
         hitstopMs: HITSTOP_LIGHT_MS,
         shakeMagnitude: CAMERA_SHAKE_MAG * 0.85,
         shakeDurationMs: CAMERA_SHAKE_DURATION_MS
       });
+      playParryFx(now);
       if (attackerActor && attackerActor.id) {
         console.debug('[Parry] success vs', attackerActor.id);
       }
@@ -3558,7 +3578,7 @@
           stopHealFx();
         }
       }
-      updateParryReadyFx(now);
+      updateParryFx(now);
       updateHealFlash(now);
 
       // Shadow follows X; tiny shrink when airborne
