@@ -593,7 +593,6 @@
     smat.alpha = 0.35; shadow.material = smat;
 
     // World objects
-    const ladders = [];
     const shrines = [];
     const campfireMeta = { url: 'assets/sprites/Campfire/CampFire.png', frames: 5, fps: 8 };
     let campfireMgr = null;
@@ -605,14 +604,6 @@
       placeholder.position.y = respawn.y;
     } else {
       respawn = { x: placeholder.position.x, y: placeholder.position.y };
-    }
-    function createLadder(x, y0, y1, width = 0.5) {
-      const h = y1 - y0;
-      const mesh = BABYLON.MeshBuilder.CreateBox('ladder', { width, height: h, depth: 0.2 }, scene);
-      mesh.position.set(x, y0 + h * 0.5, 0);
-      mesh.isVisible = false;
-      ladders.push({ x, y0, y1, width, mesh });
-      return ladders[ladders.length - 1];
     }
 
     let playerActor = null;
@@ -1449,7 +1440,6 @@
       initPlayerSprite();
       initHealFx();
       initHealFlash();
-      createLadder(2, 0, 4);
       spawnShrine(-2, 0);
 
       // === Enemies ===
@@ -3053,7 +3043,6 @@
     let slowMo = false;
     function toggleColliders() {
       showColliders = !showColliders;
-      ladders.forEach(l => { if (l.mesh) l.mesh.isVisible = showColliders; });
       console.log('Collider meshes', showColliders ? 'ON' : 'OFF');
     }
     function toggleSlowMo() { slowMo = !slowMo; console.log('Slow-mo', slowMo ? 'ON' : 'OFF'); }
@@ -3131,19 +3120,6 @@
         if (now >= state.flaskEndAt) {
           cleanupFlaskState({ stopFx: false });
         }
-      }
-
-      // Ladder detection
-      const ladder = ladders.find(l =>
-        placeholder.position.x > l.x - l.width * 0.5 &&
-        placeholder.position.x < l.x + l.width * 0.5 &&
-        placeholder.position.y >= l.y0 &&
-        placeholder.position.y <= l.y1);
-      if (ladder) {
-        state.climbing = true;
-        placeholder.position.x = ladder.x;
-      } else if (state.climbing) {
-        state.climbing = false;
       }
 
       // Shrine proximity & prompt
