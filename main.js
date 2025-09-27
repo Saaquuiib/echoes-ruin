@@ -2492,19 +2492,13 @@
             const clampMax = e.aggro ? leashClampMax : baseClampMax;
             const minCenter = centerFromFoot(e, -0.1);
             const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
-            const clampToIdleBand = (value) => Math.max(minCenter, Math.min(maxCenter, value));
             const bobValue = e.aggro ? 0 : Math.sin(e.bob) * 0.35;
             const stoopAmount = e.stoopProgress ?? 0;
             const targetX = e.aggro
               ? Math.max(clampMin, Math.min(clampMax, playerX))
               : Math.max(clampMin, Math.min(clampMax, e.spawnAnchor.x));
-            const idleCenter = clampToIdleBand(centerFromFoot(e, e.hover + bobValue));
-            let pursuitCenter = heroTorsoY;
-            if (!e.aggro) {
-              pursuitCenter = clampToIdleBand(pursuitCenter);
-            } else if (pursuitCenter < minCenter) {
-              pursuitCenter = minCenter;
-            }
+            const idleCenter = Math.max(minCenter, Math.min(maxCenter, centerFromFoot(e, e.hover + bobValue)));
+            const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, heroTorsoY));
             const desiredCenter = e.aggro
               ? idleCenter + (pursuitCenter - idleCenter) * stoopAmount
               : idleCenter;
@@ -2544,17 +2538,12 @@
               e.x = leashHardMax;
               if (e.vx > 0) e.vx = 0;
             }
-            if (!e.aggro) {
-              if (e.y < minCenter) {
-                e.y = minCenter;
-                if (e.vy < 0) e.vy = 0;
-              } else if (e.y > maxCenter) {
-                e.y = maxCenter;
-                if (e.vy > 0) e.vy = 0;
-              }
-            } else if (e.y < minCenter) {
+            if (e.y < minCenter) {
               e.y = minCenter;
               if (e.vy < 0) e.vy = 0;
+            } else if (e.y > maxCenter) {
+              e.y = maxCenter;
+              if (e.vy > 0) e.vy = 0;
             }
             const dxNow = playerX - e.x;
             if (Math.abs(e.vx) > 0.02) {
@@ -2599,8 +2588,7 @@
             const maxCenter = centerFromFoot(e, e.hover + BAT_REBOUND_MAX_ABOVE_HOVER);
             const prevY = e.y;
             if (e.aggro) {
-              let pursuitCenter = heroTorsoY;
-              if (pursuitCenter < minCenter) pursuitCenter = minCenter;
+              const pursuitCenter = Math.max(minCenter, Math.min(maxCenter, heroTorsoY));
               const dy = pursuitCenter - e.y;
               const framesEquivalent = Math.max(0, dt * 60);
               const lerpFactor = Math.max(0, Math.min(1, 1 - Math.pow(1 - BAT_VERTICAL_LERP, framesEquivalent)));
@@ -2609,14 +2597,10 @@
               const step = Math.sign(desiredStep) * Math.min(Math.abs(desiredStep), maxStep);
               e.y += step;
             }
-            if (!e.aggro) {
-              if (e.y < minCenter) {
-                e.y = minCenter;
-              } else if (e.y > maxCenter) {
-                e.y = maxCenter;
-              }
-            } else if (e.y < minCenter) {
+            if (e.y < minCenter) {
               e.y = minCenter;
+            } else if (e.y > maxCenter) {
+              e.y = maxCenter;
             }
             if (dt > 0) {
               e.vy = (e.y - prevY) / dt;
