@@ -962,7 +962,7 @@
       active: false,
       start: 0,
       end: 0,
-      maxAlpha: 0.65,
+      maxAlpha: 1.3,
       fadeIn: 150,
       fadeOut: 220,
       color: new BABYLON.Color4(0, 0, 0, 0)
