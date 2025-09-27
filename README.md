@@ -87,10 +87,9 @@
 ### Offense, Defense & Cancel Rules
 
 * **Light chain:** 3 attacks; L1→L2, L2→L3 cancel windows start on active+6f; L3 cancels only to roll/parry.
-* **Heavy/Charge:** hold 0.4–0.8 s; adds +12 dmg and +0.2 s stagger; can feint cancel back to neutral up to 0.25 s.
+* **Heavy/Charge:** hold 0.4–0.8 s; adds +12 dmg; can feint cancel back to neutral up to 0.25 s.
 * **Block:** -80% damage; stamina chip −2/tick; **Guard break** at 0 stamina → 0.8 s daze.
-* **Parry:** 120 ms window; successful parry → enemy stagger 0.6 s, small hit heal with Guard tier-3.
-* **Stagger/Poise:** enemies have Poise values; certain moves (charge/heavy/finisher) add +poise break; when exceeded → stagger state.
+* **Parry:** 120 ms window; successful parry opens a punish window and grants a small hit heal with Guard tier-3.
 
 ### Resource Economy
 
@@ -107,7 +106,7 @@
 * **Blade**
 
   1. +10% light and heavy damage.
-  2. Charged heavy grants +0.3 s extra stagger on hit.
+  2. Charged heavy grants an additional damage bonus on hit.
   3. Unlock **Charged Follow-up** (quick lunge, 20 dmg, −14 stamina).
 * **Guard**
 
@@ -347,14 +346,14 @@
 - `/js/animController.js` — animation state machine + cancel windows
 - `/js/physics2d.js` — AABB, slopes, swept collisions (initially simple)
 - `/js/ai/*.js` — enemy FSMs (wolf, bat, etc.)
-- `/js/combat.js` — hit/hurt registry, poise, hitstop
+- `/js/combat.js` — hit/hurt registry, hitstop
 - `/js/ui/*.js` — HUD, pause, shrine menus
 - `/js/audioBus.js` — SFX/Music buses, sidechain duck
 - `/js/postfx.js` — vignette/LUT/bloom via Babylon post-processes
 
 **Data-driven.**
 
-* `data/entities/<enemy>.json`: hp, dmg, speeds, tells (frames), poise, leashes.
+* `data/entities/<enemy>.json`: hp, dmg, speeds, tells (frames), leashes.
 * `data/rooms/<biome>/<id>.json`: tiles, props, spawns, connectors, ambient.
 * `data/upgrades.json`, `data/keys.json`.
 
@@ -593,11 +592,11 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Goals**
 
-* Finalize the combat engine (hit/hurtbox registry, poise/stagger, hitstop) and introduce Wolf + Bat with real AI.
+* Finalize the combat engine (hit/hurtbox registry, hitstop) and introduce Wolf + Bat with real AI.
 
 **Tasks**
 
-* `Combat` module: overlap tests, damage calc, poise thresholds, stagger state, invuln flags.
+* `Combat` module: overlap tests, damage calc, invuln flags.
 * Generic FX pool: impact rings, dust, white flash shader; SFX hookups.
 * **Wolf AI** (Brown/Grey): patrol → stalk → lunge bite (tell pose 12f) → claw; pack logic (lead + flank).
 * **Bat AI** (Origin): ceiling idle → ping → sine dive → rebound → ceiling reset.
@@ -796,7 +795,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 * [ ] Idle/Move/Attack(s)/Hit/Death animations wired, feet aligned
 * [ ] Telegraph pose (≥ 10–12 frames) + unique SFX
-* [ ] Poise values and stagger timings
+* [ ] Hit reaction timings tuned
 * [ ] Parryable segment defined (frame range)
 * [ ] Spawn/despawn rules & leash
 * [ ] FX & hitstop tuned
