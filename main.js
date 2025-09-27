@@ -15,7 +15,7 @@
   const HOLD_THRESHOLD_MS = 180;        // how long E must be held to count as Block (not Parry)
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
   const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
-  const HERO_TORSO_FRAC = 0.58;         // relative height (feet->head) where torso FX center should sit
+  const HERO_TORSO_FRAC = 0.28;         // relative height (feet->head) where torso FX center should sit
 
   const HITSTOP_LIGHT_MS = 60;
   const HITSTOP_HEAVY_MS = 80;
