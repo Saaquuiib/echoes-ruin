@@ -53,6 +53,10 @@
     });
   }
 
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
   // Scan bottom-most opaque pixel across all frames to compute baseline (empty rows below feet)
   async function detectBaselinePx(image, sheetW, sheetH, frames, frameW, frameH) {
     try {
@@ -258,7 +262,7 @@
       const center = { x: origin.x + offsetX, y: origin.y + offsetY };
       if (box.shape === 'circle') {
         const radius = Math.max(0, box.radius || 0);
-        return { type: 'circle', center, radius };
+        return { type: 'circle', center, radius, facing, origin };
       }
       const width = Math.max(0, box.width || 0);
       const height = Math.max(0, box.height || 0);
@@ -270,7 +274,34 @@
         minX: center.x - width * 0.5,
         maxX: center.x + width * 0.5,
         minY: center.y - height * 0.5,
-        maxY: center.y + height * 0.5
+        maxY: center.y + height * 0.5,
+        facing,
+        origin
+      };
+    }
+
+    function computeContactPoint(hitShape, hurtShape) {
+      if (!hitShape || !hurtShape) return null;
+      const facing = hitShape.facing >= 0 ? 1 : -1;
+      if (hurtShape.type === 'rect') {
+        const edgeX = facing >= 0 ? hurtShape.minX : hurtShape.maxX;
+        const edgeY = clamp(hitShape.center.y, hurtShape.minY, hurtShape.maxY);
+        return { x: edgeX - facing * 0.02, y: edgeY };
+      }
+      if (hurtShape.type === 'circle') {
+        const dx = hurtShape.center.x - hitShape.center.x;
+        const dy = hurtShape.center.y - hitShape.center.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const dirX = dx / dist;
+        const dirY = dy / dist;
+        return {
+          x: hurtShape.center.x - dirX * hurtShape.radius,
+          y: hurtShape.center.y - dirY * hurtShape.radius
+        };
+      }
+      return {
+        x: hurtShape.center?.x != null ? hurtShape.center.x - facing * 0.05 : hitShape.center.x,
+        y: hurtShape.center?.y != null ? hurtShape.center.y : hitShape.center.y
       };
     }
 
@@ -387,6 +418,7 @@
           const hurtShape = computeShape(hurtbox);
           if (!hurtShape || !shapesOverlap(hitShape, hurtShape)) continue;
 
+          const contactPoint = computeContactPoint(hitShape, hurtShape);
           const event = {
             now,
             source: hitbox.actor,
@@ -399,7 +431,11 @@
             cancelled: false,
             meta: hitbox.meta || null,
             damage: 0,
-            damageApplied: false
+            damageApplied: false,
+            hitShape,
+            hurtShape,
+            contactPoint,
+            hitFacing: hitShape?.facing ?? 1
           };
           event.damage = typeof hitbox.damage === 'function' ? hitbox.damage(event) : (hitbox.damage || 0);
 
@@ -806,6 +842,181 @@
       color: new BABYLON.Color4(0, 0, 0, 0)
     };
 
+    const HIT_FX_META = { url: 'assets/sprites/VFX/Hit FX.png', frames: 7, frameMs: 48 };
+    const HURT_FX_META = { url: 'assets/sprites/VFX/Hurt FX.png', frames: 6, frameMs: 52 };
+    const HIT_FX_SCALE = 0.92;
+    const HURT_FX_SCALE = 0.78;
+    const FX_LAYER_OFFSET = -0.035;
+    const HIT_FX_POOL_SIZE = 20;
+    const HURT_FX_POOL_SIZE = 16;
+
+    function createFxPool({ name, meta, capacity, frameMs, zOffset }) {
+      const pool = {
+        name,
+        meta,
+        capacity,
+        frameMs,
+        frames: meta.frames,
+        zOffset: zOffset ?? FX_LAYER_OFFSET,
+        manager: null,
+        ready: false,
+        frameW: 0,
+        frameH: 0,
+        sizeUnits: 0,
+        totalDuration: meta.frames * frameMs,
+        renderGroupId: null,
+        entries: new Array(capacity),
+        active: [],
+        free: []
+      };
+
+      for (let i = 0; i < capacity; i++) {
+        pool.entries[i] = {
+          sprite: null,
+          active: false,
+          start: 0,
+          lastFrame: -1
+        };
+        pool.free.push(i);
+      }
+
+      pool.init = async function initFxPool() {
+        if (pool.ready) return true;
+        const { ok, w: sheetW, h: sheetH } = await loadImage(meta.url);
+        if (!ok) {
+          console.warn(`[FX] Sprite sheet missing for ${name}; skipping.`);
+          return false;
+        }
+        const frameW = Math.floor(sheetW / Math.max(1, meta.frames));
+        const frameH = Math.floor(sheetH);
+        pool.frameW = frameW;
+        pool.frameH = frameH;
+        pool.sizeUnits = frameH / PPU;
+        pool.totalDuration = meta.frames * frameMs;
+        pool.manager = new BABYLON.SpriteManager(name, meta.url, capacity, { width: frameW, height: frameH }, scene);
+        pool.manager.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+        pool.manager.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        pool.manager.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        pool.ready = true;
+        return true;
+      };
+
+      pool.obtainSlot = function obtainSlot() {
+        if (pool.free.length > 0) return pool.free.pop();
+        let oldestPos = -1;
+        let oldestStart = Infinity;
+        for (let i = 0; i < pool.active.length; i++) {
+          const idx = pool.active[i];
+          const entry = pool.entries[idx];
+          if (!entry.active) {
+            oldestPos = i;
+            break;
+          }
+          if (entry.start < oldestStart) {
+            oldestStart = entry.start;
+            oldestPos = i;
+          }
+        }
+        if (oldestPos >= 0) {
+          return pool.deactivateAt(oldestPos, false);
+        }
+        return -1;
+      };
+
+      pool.deactivateAt = function deactivateAt(pos, pushToFree = true) {
+        if (pos < 0 || pos >= pool.active.length) return -1;
+        const lastIndex = pool.active.length - 1;
+        const idx = pool.active[pos];
+        const swap = pool.active[lastIndex];
+        pool.active[pos] = swap;
+        pool.active.pop();
+        const entry = pool.entries[idx];
+        entry.active = false;
+        entry.start = 0;
+        entry.lastFrame = -1;
+        if (entry.sprite) {
+          entry.sprite.isVisible = false;
+          entry.sprite.cellIndex = 0;
+          entry.sprite.stopAnimation();
+        }
+        if (pushToFree) pool.free.push(idx);
+        return idx;
+      };
+
+      pool.spawn = function spawn(x, y, sizeUnits, facing = 1, baseZ = 0, renderGroupId = null, now = performance.now()) {
+        if (!pool.ready || !pool.manager) return null;
+        const idx = pool.obtainSlot();
+        if (idx < 0) return null;
+        const entry = pool.entries[idx];
+        let sprite = entry.sprite;
+        if (!sprite) {
+          sprite = new BABYLON.Sprite(`${name}_${idx}`, pool.manager);
+          sprite.isPickable = false;
+          sprite.stopAnimation();
+          sprite.isVisible = false;
+          entry.sprite = sprite;
+        }
+        const appliedSize = Math.max(0.01, sizeUnits || pool.sizeUnits);
+        sprite.size = appliedSize;
+        sprite.cellIndex = 0;
+        sprite.stopAnimation();
+        sprite.isVisible = true;
+        sprite.invertU = facing < 0;
+        sprite.position.x = x;
+        sprite.position.y = y;
+        sprite.position.z = baseZ + pool.zOffset;
+        const group = renderGroupId != null ? renderGroupId : pool.renderGroupId;
+        if (group != null) sprite.renderingGroupId = group;
+        entry.active = true;
+        entry.start = now;
+        entry.lastFrame = -1;
+        pool.active.push(idx);
+        return sprite;
+      };
+
+      pool.update = function update(now = performance.now()) {
+        if (!pool.ready) return;
+        let i = 0;
+        while (i < pool.active.length) {
+          const idx = pool.active[i];
+          const entry = pool.entries[idx];
+          if (!entry.active || !entry.sprite) {
+            pool.deactivateAt(i);
+            continue;
+          }
+          const elapsed = now - entry.start;
+          if (elapsed >= pool.totalDuration) {
+            pool.deactivateAt(i);
+            continue;
+          }
+          const rawFrame = Math.floor(elapsed / pool.frameMs);
+          const frame = clamp(rawFrame, 0, pool.frames - 1);
+          if (frame !== entry.lastFrame) {
+            entry.sprite.cellIndex = frame;
+            entry.lastFrame = frame;
+          }
+          i++;
+        }
+      };
+
+      return pool;
+    }
+
+    const fxHit = createFxPool({
+      name: 'fx_hit',
+      meta: HIT_FX_META,
+      capacity: HIT_FX_POOL_SIZE,
+      frameMs: HIT_FX_META.frameMs,
+      zOffset: FX_LAYER_OFFSET
+    });
+    const fxHurt = createFxPool({
+      name: 'fx_hurt',
+      meta: HURT_FX_META,
+      capacity: HURT_FX_POOL_SIZE,
+      frameMs: HURT_FX_META.frameMs,
+      zOffset: FX_LAYER_OFFSET
+    });
+
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false, pendingHit: false, hitAt: 0, hitMeta: null };
     const heavy = {
@@ -1111,6 +1322,22 @@
         friendlyFire,
         meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
         onHit: (event) => {
+          if (event.damageApplied) {
+            const contact = event.contactPoint || event.hurtShape?.center || null;
+            if (contact) {
+              const baseSprite = playerSprite.sprite;
+              const basePos = baseSprite ? baseSprite.position : placeholder.position;
+              const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+              const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+                ? baseSprite.renderingGroupId
+                : null;
+              const facing = event.hitFacing ?? (state.facing >= 0 ? 1 : -1);
+              const scaleUnits = playerSprite.sizeUnits * HIT_FX_SCALE;
+              const posX = contact.x ?? (event.hurtShape ? event.hurtShape.center.x : basePos.x);
+              const posY = contact.y ?? (event.hurtShape ? event.hurtShape.center.y : basePos.y);
+              fxHit.spawn(posX, posY, scaleUnits, facing, baseZ, renderGroup, event.now);
+            }
+          }
           if (event.firstHit && event.hitLanded) {
             applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs });
           }
@@ -1334,6 +1561,8 @@
       initPlayerSprite();
       initHealFx();
       initHealFlash();
+      fxHit.init();
+      fxHurt.init();
       spawnShrine(-2, 0);
 
       // === Enemies ===
@@ -2873,6 +3102,20 @@
       resetHeavyState({ keepActing: true });
       if (!opts.alreadyApplied) setHP(stats.hp - dmg);
       applyImpactEffects({ hitstopMs: HITSTOP_HURT_MS, shakeMagnitude: CAMERA_SHAKE_MAG * 1.05, shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 1.1 });
+      const suppressFx = fadeEl?.classList?.contains('show');
+      if (!suppressFx) {
+        const baseSprite = playerSprite.sprite;
+        const basePos = baseSprite ? baseSprite.position : placeholder.position;
+        const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+        const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+          ? baseSprite.renderingGroupId
+          : null;
+        const scaleUnits = playerSprite.sizeUnits * HURT_FX_SCALE;
+        const fxX = basePos.x;
+        const fxY = torsoCenterY();
+        const facing = state.facing >= 0 ? 1 : -1;
+        fxHurt.spawn(fxX, fxY, scaleUnits, facing, baseZ, renderGroup);
+      }
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
       state.acting = true; combo.stage = 0; combo.queued = false;
@@ -3189,6 +3432,8 @@
         }
       }
       updateHealFlash(now);
+      fxHit.update(now);
+      fxHurt.update(now);
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
