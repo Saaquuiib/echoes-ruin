@@ -842,10 +842,10 @@
       color: new BABYLON.Color4(0, 0, 0, 0)
     };
 
-    const HIT_FX_META = { url: 'assets/sprites/VFX/Hit FX.png', frames: 7, frameMs: 48 };
+    const HIT_FX_META = { url: 'assets/sprites/VFX/Hit FX.png', frames: 7, frameMs: 52 };
     const HURT_FX_META = { url: 'assets/sprites/VFX/Hurt FX.png', frames: 6, frameMs: 52 };
-    const HIT_FX_SCALE = 0.92;
-    const HURT_FX_SCALE = 0.78;
+    const HIT_FX_SCALE = 0.48;
+    const HURT_FX_SCALE = 0.4;
     const FX_LAYER_OFFSET = -0.035;
     const HIT_FX_POOL_SIZE = 20;
     const HURT_FX_POOL_SIZE = 16;
@@ -962,7 +962,7 @@
         sprite.stopAnimation();
         sprite.isVisible = true;
         sprite.invertU = facing < 0;
-        sprite.position.x = x;
+        sprite.position.x = x + (facing < 0 ? -appliedSize * 0.25 : appliedSize * 0.25);
         sprite.position.y = y;
         sprite.position.z = baseZ + pool.zOffset;
         const group = renderGroupId != null ? renderGroupId : pool.renderGroupId;
