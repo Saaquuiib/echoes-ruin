@@ -92,7 +92,7 @@
   }
 
   const SPRITE_FLASH_DURATION_MS = 100;
-  const SPRITE_FLASH_INTENSITY = 1.7;
+  const SPRITE_FLASH_INTENSITY = 25;
   const SpriteFlash = (() => {
     const states = new Map();
 
@@ -963,7 +963,7 @@
       active: false,
       start: 0,
       end: 0,
-      maxAlpha: 0.65,
+      maxAlpha: 1.3,
       fadeIn: 150,
       fadeOut: 220,
       color: new BABYLON.Color4(0, 0, 0, 0)
