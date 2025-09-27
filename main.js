@@ -503,7 +503,9 @@
       const flashNow = event?.now ?? performance.now();
       const sprite = resolveActorSprite(actor);
       if (sprite) SpriteFlash.trigger(sprite, flashNow);
-      if (actor.hp <= 0 && actor.alive) {
+      const lethal = actor.hp <= 0;
+      if (event) event.lethal = lethal;
+      if (lethal && actor.alive) {
         actor.alive = false;
         if (actor.onDeath) actor.onDeath(event);
       }
@@ -2103,14 +2105,17 @@
         if (!force && e.anim === name && e.sprite) return;
         const preserveAnchor = !!opts.preserveAnchor;
         const anchorOverride = opts.anchor || null;
-        const pos = e.sprite ? e.sprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
+        const prevSprite = e.sprite || null;
+        const wasFlashing = prevSprite ? SpriteFlash.isFlashing(prevSprite) : false;
+        const flashCarryNow = wasFlashing ? performance.now() : 0;
+        const pos = prevSprite ? prevSprite.position.clone() : new BABYLON.Vector3(e.x, e.y, 0);
         let footY = null;
         if (!preserveAnchor) {
           const prevBaseline = e.baselineUnits;
           const prevCenterY = pos.y;
           footY = prevBaseline != null ? (prevCenterY - (e.sizeUnits * 0.5) + prevBaseline) : null;
         }
-        if (e.sprite) e.sprite.dispose();
+        if (prevSprite) prevSprite.dispose();
         const nextBaseline = e.baselines?.[name];
         if (nextBaseline != null) {
           e.baselineUnits = nextBaseline;
@@ -2142,6 +2147,10 @@
         e.anim = name;
         e.animStart = performance.now();
         e.animDur = (meta.frames / meta.fps) * 1000;
+        if (wasFlashing) {
+          const triggerAt = flashCarryNow || performance.now();
+          SpriteFlash.trigger(sp, triggerAt);
+        }
         if (preserveAnchor && e.anchor) {
           e.anchor.x = sp.position.x;
           e.anchor.y = sp.position.y;
