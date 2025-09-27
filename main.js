@@ -91,6 +91,95 @@
     }
   }
 
+  const SPRITE_FLASH_DURATION_MS = 100;
+  const SPRITE_FLASH_INTENSITY = 1.7;
+  const SpriteFlash = (() => {
+    const states = new Map();
+
+    function cloneColor(color) {
+      if (!color) return new BABYLON.Color4(1, 1, 1, 1);
+      if (typeof color.clone === 'function') return color.clone();
+      const r = color.r ?? color.red ?? color.x ?? 1;
+      const g = color.g ?? color.green ?? color.y ?? 1;
+      const b = color.b ?? color.blue ?? color.z ?? 1;
+      const a = color.a ?? color.alpha ?? color.w ?? 1;
+      return new BABYLON.Color4(r, g, b, a);
+    }
+
+    function spriteDisposed(sprite) {
+      if (!sprite) return true;
+      const fn = typeof sprite.isDisposed === 'function' ? sprite.isDisposed : null;
+      return fn ? fn.call(sprite) : false;
+    }
+
+    function applyFlash(sprite, entry) {
+      if (!sprite || spriteDisposed(sprite)) return;
+      const base = entry.baseColor || new BABYLON.Color4(1, 1, 1, 1);
+      const alpha = base.a ?? 1;
+      const intensity = entry.intensity ?? SPRITE_FLASH_INTENSITY;
+      sprite.color = new BABYLON.Color4(intensity, intensity, intensity, alpha);
+    }
+
+    function trigger(sprite, now = performance.now(), durationMs = SPRITE_FLASH_DURATION_MS) {
+      if (!sprite || spriteDisposed(sprite)) return;
+      let entry = states.get(sprite);
+      const base = entry?.baseColor ? cloneColor(entry.baseColor) : cloneColor(sprite.color);
+      if (!entry) {
+        entry = { baseColor: base, until: now + durationMs, intensity: SPRITE_FLASH_INTENSITY };
+        states.set(sprite, entry);
+      } else {
+        entry.baseColor = base;
+        entry.until = now + durationMs;
+      }
+      applyFlash(sprite, entry);
+    }
+
+    function update(now = performance.now()) {
+      if (states.size === 0) return;
+      for (const [sprite, entry] of states) {
+        if (!sprite || spriteDisposed(sprite)) {
+          states.delete(sprite);
+          continue;
+        }
+        if (now < entry.until) {
+          applyFlash(sprite, entry);
+        } else {
+          const base = cloneColor(entry.baseColor);
+          sprite.color = base;
+          states.delete(sprite);
+        }
+      }
+    }
+
+    function setBaseColor(sprite, color, now = performance.now()) {
+      if (!sprite || spriteDisposed(sprite)) return;
+      const base = cloneColor(color);
+      const entry = states.get(sprite);
+      if (entry) {
+        entry.baseColor = base;
+        if (now >= entry.until) {
+          sprite.color = cloneColor(base);
+          states.delete(sprite);
+        }
+      } else {
+        sprite.color = base;
+      }
+    }
+
+    function isFlashing(sprite, now = performance.now()) {
+      if (!sprite || spriteDisposed(sprite)) return false;
+      const entry = states.get(sprite);
+      return !!entry && now < entry.until;
+    }
+
+    return {
+      trigger,
+      update,
+      setBaseColor,
+      isFlashing
+    };
+  })();
+
   const Combat = (() => {
     let actorSeq = 1;
     let hurtSeq = 1;
@@ -123,6 +212,7 @@
         hp: config.hp ?? config.hpMax ?? config.maxHp ?? 0,
         getOrigin: config.getPosition || config.getOrigin || (() => ({ x: 0, y: 0 })),
         getFacing: config.getFacing || (() => 1),
+        getSprite: typeof config.getSprite === 'function' ? config.getSprite : null,
         invulnFlags: new Map(),
         hurtboxes: new Map(),
         alive: true,
@@ -350,6 +440,39 @@
       return invuln;
     }
 
+    function resolveActorSprite(actor) {
+      if (!actor) return null;
+      try {
+        if (typeof actor.getSprite === 'function') {
+          const resolved = actor.getSprite();
+          if (resolved) return resolved;
+        }
+      } catch { /* ignore */ }
+      const meta = actor.meta || null;
+      if (meta) {
+        try {
+          if (typeof meta.getSprite === 'function') {
+            const resolved = meta.getSprite();
+            if (resolved) return resolved;
+          }
+        } catch { /* ignore */ }
+        if (meta.sprite) return meta.sprite;
+        if (meta.entity?.sprite) return meta.entity.sprite;
+      }
+      const data = actor.data || null;
+      if (data) {
+        try {
+          if (typeof data.getSprite === 'function') {
+            const resolved = data.getSprite();
+            if (resolved) return resolved;
+          }
+        } catch { /* ignore */ }
+        if (data.sprite) return data.sprite;
+        if (data.entity?.sprite) return data.entity.sprite;
+      }
+      return null;
+    }
+
     function applyDamage(actor, event) {
       const amount = Math.max(0, event.damage || 0);
       if (amount <= 0 || !actor.alive) return false;
@@ -359,6 +482,9 @@
       actor.hp = next;
       if (actor.onHealthChange) actor.onHealthChange(actor.hp, event);
       if (actor.onDamage) actor.onDamage(event);
+      const flashNow = event?.now ?? performance.now();
+      const sprite = resolveActorSprite(actor);
+      if (sprite) SpriteFlash.trigger(sprite, flashNow);
       if (actor.hp <= 0 && actor.alive) {
         actor.alive = false;
         if (actor.onDeath) actor.onDeath(event);
@@ -498,7 +624,8 @@
       clearInvulnerability,
       isInvulnerable,
       update,
-      actors
+      actors,
+      resolveActorSprite
     };
   })();
 
@@ -575,6 +702,18 @@
 
     let playerActor = null;
     let playerHurtbox = null;
+    const playerSprite = {
+      mgr: {},
+      sizeByAnim: {},
+      frameMeta: {},
+      sprite: null,
+      state: 'idle',
+      sizeUnits: 2,
+      baselineUnits: (FALLBACK_BASELINE_PX / PPU),
+      animStarted: 0,
+      animDurationMs: 0,
+      loop: true
+    };
     async function spawnShrine(x, y) {
       const mesh = BABYLON.MeshBuilder.CreateCylinder('shrine', { height: 1.5, diameter: 0.5 }, scene);
       mesh.position.set(x, y + 0.75, 0);
@@ -731,6 +870,7 @@
       hp: stats.hp,
       getPosition: () => ({ x: placeholder.position.x, y: placeholder.position.y }),
       getFacing: () => state.facing,
+      getSprite: () => playerSprite.sprite,
       processHit: (event) => {
         const now = performance.now();
         if (state.dead) {
@@ -812,19 +952,6 @@
       hurt:   { url: 'assets/sprites/player/Hurt.png',   frames: 3,  fps: 14, loop: false },
       death:  { url: 'assets/sprites/player/Death.png',  frames: 14, fps: 12, loop: false },
 
-    };
-
-    const playerSprite = {
-      mgr: {},
-      sizeByAnim: {},
-      frameMeta: {},
-      sprite: null,
-      state: 'idle',
-      sizeUnits: 2,
-      baselineUnits: (FALLBACK_BASELINE_PX / PPU),
-      animStarted: 0,
-      animDurationMs: 0,
-      loop: true
     };
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
@@ -1280,6 +1407,32 @@
       }
     }
 
+    function triggerPlayerAttackHitEffects(event) {
+      if (!event || !event.damageApplied) return;
+      const contact = event.contactPoint || event.hurtShape?.center || null;
+      if (contact) {
+        const baseSprite = playerSprite.sprite;
+        const basePos = baseSprite ? baseSprite.position : placeholder.position;
+        const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+        const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+          ? baseSprite.renderingGroupId
+          : null;
+        const facing = event.hitFacing ?? (state.facing >= 0 ? 1 : -1);
+        const scaleUnits = playerSprite.sizeUnits * HIT_FX_SCALE;
+        const posX = contact.x ?? (event.hurtShape ? event.hurtShape.center.x : basePos.x);
+        const posY = contact.y ?? (event.hurtShape ? event.hurtShape.center.y : basePos.y);
+        fxHit.spawn(posX, posY, scaleUnits, facing, baseZ, renderGroup, event.now);
+      }
+
+      if (event.target) {
+        const sprite = Combat.resolveActorSprite ? Combat.resolveActorSprite(event.target) : null;
+        if (sprite) {
+          const flashNow = event.now ?? performance.now();
+          SpriteFlash.trigger(sprite, flashNow);
+        }
+      }
+    }
+
     function onPlayerAttackLand(meta = {}) {
       if (!playerActor) return;
       const inferredId = meta.attackId || (meta.stage ? `light${meta.stage}` : null) || meta.type || 'light1';
@@ -1326,22 +1479,7 @@
         friendlyFire,
         meta: { attackId: inferredId, stage: meta.stage, charged: meta.charged },
         onHit: (event) => {
-          if (event.damageApplied) {
-            const contact = event.contactPoint || event.hurtShape?.center || null;
-            if (contact) {
-              const baseSprite = playerSprite.sprite;
-              const basePos = baseSprite ? baseSprite.position : placeholder.position;
-              const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
-              const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
-                ? baseSprite.renderingGroupId
-                : null;
-              const facing = event.hitFacing ?? (state.facing >= 0 ? 1 : -1);
-              const scaleUnits = playerSprite.sizeUnits * HIT_FX_SCALE;
-              const posX = contact.x ?? (event.hurtShape ? event.hurtShape.center.x : basePos.x);
-              const posY = contact.y ?? (event.hurtShape ? event.hurtShape.center.y : basePos.y);
-              fxHit.spawn(posX, posY, scaleUnits, facing, baseZ, renderGroup, event.now);
-            }
-          }
+          triggerPlayerAttackHitEffects(event);
           if (event.firstHit && event.hitLanded) {
             applyImpactEffects({ hitstopMs, shakeMagnitude: shakeMag, shakeDurationMs });
           }
@@ -1609,7 +1747,7 @@
           e.fadeDone = true;
           return;
         }
-        e.sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
+        SpriteFlash.setBaseColor(e.sprite, new BABYLON.Color4(1, 1, 1, alpha), now);
       }
       const WOLF_COMBO_TABLE = {
         close: [
@@ -2084,6 +2222,7 @@
           meta: { entity: e, type: e.type },
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
+          getSprite: () => e.sprite,
           onHealthChange: (hp) => { e.hp = hp; },
           onDamage: (event) => {
             const now = performance.now();
@@ -2204,6 +2343,7 @@
           meta: { entity: e, type: e.type },
           getPosition: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
+          getSprite: () => e.sprite,
           onHealthChange: (hp) => { e.hp = hp; },
           onDamage: (event) => {
             const now = performance.now();
@@ -3438,6 +3578,7 @@
       updateHealFlash(now);
       fxHit.update(now);
       fxHurt.update(now);
+      SpriteFlash.update(now);
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
