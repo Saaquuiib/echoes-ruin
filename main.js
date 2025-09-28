@@ -1038,7 +1038,7 @@
 
     const HIT_FX_META = { url: 'assets/sprites/VFX/Hit FX.png', frames: 7, frameMs: 52 };
     const HURT_FX_META = { url: 'assets/sprites/VFX/Hurt FX.png', frames: 6, frameMs: 52 };
-    const HIT_FX_SCALE = 0.42;
+    const HIT_FX_SCALE = 0.4;
     const HURT_FX_SCALE = 0.4;
     const FX_LAYER_OFFSET = -0.035;
     const HIT_FX_POOL_SIZE = 20;
