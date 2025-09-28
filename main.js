@@ -3839,7 +3839,7 @@
 
         const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
         const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        if (buffered && (state.onGround || canCoyote)) {
+        if (buffered && (state.onGround || canCoyote) && !state.rolling) {
           state.vy = stats.jumpVel;
           state.onGround = false;
           state.jumpBufferedAt = 0;
