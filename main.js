@@ -581,7 +581,8 @@
             hitShape,
             hurtShape,
             contactPoint,
-            hitFacing: hitShape?.facing ?? 1
+            hitFacing: hitShape?.facing ?? 1,
+            phase: 'pre'
           };
           event.damage = typeof hitbox.damage === 'function' ? hitbox.damage(event) : (hitbox.damage || 0);
 
@@ -590,6 +591,10 @@
           }
           if (hurtbox.actor.onPreHit) {
             hurtbox.actor.onPreHit(event);
+          }
+          if (hitbox.onHit) {
+            event.phase = 'pre';
+            hitbox.onHit(event);
           }
           if (event.cancelled) {
             hitbox.alreadyHit.add(hurtbox.id);
@@ -603,7 +608,10 @@
 
           event.hitLanded = event.damageApplied || event.handled;
           if (hurtbox.actor.onPostHit) hurtbox.actor.onPostHit(event);
-          if (hitbox.onHit && event.hitLanded) hitbox.onHit(event);
+          if (hitbox.onHit && event.hitLanded) {
+            event.phase = 'post';
+            hitbox.onHit(event);
+          }
 
           hitbox.alreadyHit.add(hurtbox.id);
           hitbox.hitCount++;
@@ -1791,8 +1799,8 @@
           durationMs: 190,
           damage: 12,
           width: e => e.sizeUnits * 0.54,
-          height: e => e.sizeUnits * 0.42,
-          offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
+          height: e => e.sizeUnits * 0.36,
+          offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.22 }),
           maxRange: 1.05,
           comboGapMs: 150,
           recoveryMs: 380,
@@ -1807,8 +1815,8 @@
           durationMs: 200,
           damage: 15,
           width: e => e.sizeUnits * 0.6,
-          height: e => e.sizeUnits * 0.5,
-          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
+          height: e => e.sizeUnits * 0.4,
+          offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.18 }),
           maxRange: 1.25,
           comboGapMs: 170,
           recoveryMs: 440,
@@ -1940,7 +1948,7 @@
         const width = typeof def.width === 'function' ? def.width(e) : def.width;
         const height = typeof def.height === 'function' ? def.height(e) : def.height;
         const offset = typeof def.offset === 'function' ? def.offset(e) : def.offset || { x: 0, y: 0 };
-        Combat.spawnHitbox(e.combat, {
+        const config = {
           shape: 'rect',
           width: width ?? 0,
           height: height ?? 0,
@@ -1950,7 +1958,18 @@
           getOrigin: () => ({ x: e.x, y: e.y }),
           getFacing: () => e.facing,
           meta: { enemy: 'wolf', attack: e.currentAttack?.name || 'unknown' }
-        });
+        };
+        const attackName = e.currentAttack?.name || '';
+        if (attackName !== 'leap' && playerActor) {
+          config.onHit = (event) => {
+            if (event.phase !== 'pre') return;
+            if (event.target !== playerActor) return;
+            if (state.onGround) return;
+            event.cancelled = true;
+            event.applyDamage = false;
+          };
+        }
+        Combat.spawnHitbox(e.combat, config);
       }
 
       function startWolfAttack(e, name) {
