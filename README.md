@@ -566,7 +566,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Tasks**
 
-* Implement movement (accel/decel, coyote, input buffer), jump (start/mid/end), roll (i-frames 6–18f), climb ladders.
+* Implement movement (accel/decel, coyote, input buffer), jump (start/mid/end), roll (i-frames 6–18f).
 * Stamina & HP systems + UI bars; Oath Flasks (3) with roll-cancel after 0.5 s.
 * Light 1/2/3 and Heavy/Charge attacks with cancel rules; hitstop; camera micro-shake (toggle).
 * Tune perfect-roll window (120 ms) with stamina refund; add perfect-roll SFX chime.
@@ -575,7 +575,7 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 **Deliverables**
 
-* **Lost Glades Graybox**: flat ground + ladder + shrine; dummy target to hit/roll.
+* **Lost Glades Graybox**: flat ground + shrine; dummy target to hit/roll.
 
 **DoD**
 
