@@ -3341,7 +3341,9 @@
       setST(stats.stam - stats.rollCost);
       const now = performance.now();
       const startOffset = Math.max(0, stats.iFrameStart || 0);
-      const endOffset = Math.max(startOffset, stats.iFrameEnd || 0);
+      const rollDurationOffset = Math.max(startOffset, stats.rollDur || 0);
+      const configuredEndOffset = Math.max(startOffset, stats.iFrameEnd || 0);
+      const endOffset = Math.max(rollDurationOffset, configuredEndOffset);
       const iStart = now + startOffset * 1000;
       const iEnd = now + endOffset * 1000;
       state.rolling = true;
