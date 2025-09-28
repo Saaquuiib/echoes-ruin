@@ -797,7 +797,7 @@
     const Keys = {
       left: false, right: false, jump: false, roll: false,
       light: false, heavy: false, flask: false, interact: false,
-      runHold: false, up: false, down: false,
+      runHold: false,
       debugHurt: false, debugDie: false
     };
 
@@ -807,8 +807,6 @@
       'Space': 'jump', 'KeyL': 'roll',
       'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
       'KeyE': 'interact',
-      'KeyW': 'up', 'ArrowUp': 'up',
-      'KeyS': 'down', 'ArrowDown': 'down',
       'F6': 'camShake', 'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
@@ -819,8 +817,6 @@
       'Space': 'jump', 'KeyL': 'roll',
       'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
       'KeyE': 'interact',
-      'KeyW': 'up', 'ArrowUp': 'up',
-      'KeyS': 'down', 'ArrowDown': 'down',
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
     };
@@ -859,7 +855,7 @@
       hpMax: 100, hp: 100,
       stamMax: 100, stam: 100, stamRegenPerSec: 22,
       walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
-      jumpVel: 8, gravity: -20, climbSpeed: 2.5,
+      jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
       lightCost: 5, heavyCost: 18,
@@ -884,7 +880,6 @@
       flaskEndAt: 0,
       flaskHealApplied: false,
 
-      climbing: false,
       landing: false,
       landingStartAt: 0,
       landingUntil: 0,
@@ -3556,7 +3551,7 @@
         terminateRollState();
         placeholder.position.x = respawn.x;
         placeholder.position.y = respawn.y;
-        state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
+        state.vx = 0; state.vy = 0; state.onGround = true;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
         if (playerActor) {
           playerActor.alive = true;
@@ -3604,12 +3599,12 @@
         `FPS:${engine.getFps().toFixed(0)}  Cam:ORTHO h=${ORTHO_VIEW_HEIGHT}\n` +
         `Anim:${playerSprite.state} loop:${playerSprite.loop}  size:${playerSprite.sizeUnits?.toFixed(2)} base:${playerSprite.baselineUnits?.toFixed(3)}\n` +
         `Y:${playerSprite.sprite?.position.y.toFixed(2)} FeetCenter:${feetCenterY().toFixed(2)} Ground:0 Air:${!state.onGround}\n` +
-        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}  Climb:${state.climbing}\n` +
+        `HP:${Math.round(stats.hp)}/${stats.hpMax}  ST:${Math.round(stats.stam)}  Dead:${state.dead}\n` +
         `vx:${state.vx.toFixed(2)} vy:${state.vy.toFixed(2)}  Roll:${state.rolling} Acting:${state.acting} Combo(stage:${combo.stage} queued:${combo.queued})\n` +
         `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)}\n` +
         `Hitstop:${hitstopMs.toFixed(0)}ms  CamShake:${cameraShake.enabled} (active:${cameraShake.active})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, W/S climb, Space jump, L roll, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
+        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, Space jump, L roll, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
@@ -3669,29 +3664,22 @@
         const want = (Keys.left ? -1 : 0) + (Keys.right ? 1 : 0);
         if (want !== 0 && !state.rolling) state.facing = want;
 
-        if (state.climbing) {
-          state.vx = 0;
-          const climb = (Keys.up ? stats.climbSpeed : 0) + (Keys.down ? -stats.climbSpeed : 0);
-          state.vy = climb;
-          if (Keys.jump) { state.climbing = false; state.vy = stats.jumpVel; state.onGround = false; Keys.jump = false; }
-        } else {
-          const speedMax = Keys.runHold ? stats.runMax : stats.walkMax;
-          const target = want * speedMax;
-          const a = (Math.abs(target) > Math.abs(state.vx)) ? stats.accel : stats.decel;
-          if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
-          else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
+        const speedMax = Keys.runHold ? stats.runMax : stats.walkMax;
+        const target = want * speedMax;
+        const a = (Math.abs(target) > Math.abs(state.vx)) ? stats.accel : stats.decel;
+        if (state.vx < target) state.vx = Math.min(target, state.vx + a * dt);
+        else if (state.vx > target) state.vx = Math.max(target, state.vx - a * dt);
 
-          const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
-          const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-          if (buffered && (state.onGround || canCoyote)) {
-            state.vy = stats.jumpVel;
-            state.onGround = false;
-            state.jumpBufferedAt = 0;
-            state.landing = false;
-            state.landingStartAt = 0;
-            state.landingUntil = 0;
-            state.landingTriggeredAt = 0;
-          }
+        const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
+        const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+        if (buffered && (state.onGround || canCoyote)) {
+          state.vy = stats.jumpVel;
+          state.onGround = false;
+          state.jumpBufferedAt = 0;
+          state.landing = false;
+          state.landingStartAt = 0;
+          state.landingUntil = 0;
+          state.landingTriggeredAt = 0;
         }
       } else {
         // damp movement during actions
@@ -3766,16 +3754,10 @@
       const wasOnGround = state.onGround;
       let vyBefore = state.vy;
       if (!state.dead) {
-        if (state.climbing) {
-          vyBefore = state.vy;
-          placeholder.position.x += state.vx * dt;
-          placeholder.position.y += state.vy * dt;
-        } else {
-          state.vy += stats.gravity * dt;
-          vyBefore = state.vy;
-          placeholder.position.x += state.vx * dt;
-          placeholder.position.y += state.vy * dt;
-        }
+        state.vy += stats.gravity * dt;
+        vyBefore = state.vy;
+        placeholder.position.x += state.vx * dt;
+        placeholder.position.y += state.vy * dt;
       }
 
       // Ground clamp (feet at y=0 => center at feetCenterY)
@@ -3877,10 +3859,6 @@
 
         if (landingActive) {
           targetAnim = 'landing';
-        } else if (state.climbing) {
-          if (state.vy > 0.15) targetAnim = 'climbUp';
-          else if (state.vy < -0.15) targetAnim = 'climbDown';
-          else targetAnim = 'climbUp';
         } else if (!state.onGround) {
           if (state.vy > 0.15) targetAnim = 'jump';
           else if (state.vy < -0.15) targetAnim = 'fall';
