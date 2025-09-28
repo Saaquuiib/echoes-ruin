@@ -1767,8 +1767,6 @@
       const WOLF_BASE_STALK_SPEED_FAR = 3.1;
       const WOLF_BASE_STALK_SPEED_NEAR = 2.7;
       const WOLF_AIR_STEER = 18;
-      const WOLF_ATTACK_STOP_DIST = 0.62;
-      const WOLF_ATTACK_ALLOWED_OVERLAP_FRAC = 0.12;
 
       function wolfRandRange(min, max) {
         if (!Number.isFinite(min) || !Number.isFinite(max)) return min || max || 0;
@@ -1885,58 +1883,6 @@
           target = Math.max(e.patrolMin, Math.min(e.patrolMax, target));
         }
         return target;
-      }
-
-      function wolfGetStopDistance(e) {
-        const base = WOLF_ATTACK_STOP_DIST;
-        const overlap = Math.max(0, (e?.sizeUnits || 0) * WOLF_ATTACK_ALLOWED_OVERLAP_FRAC);
-        return Math.max(0.05, base - overlap);
-      }
-
-      function wolfClampApproachPosition(e, playerX, nextX) {
-        if (!e || !Number.isFinite(playerX) || !Number.isFinite(nextX)) {
-          return { x: nextX, clamped: false };
-        }
-        const vx = Number.isFinite(e.vx) ? e.vx : 0;
-        if (Math.abs(vx) < 0.0001) {
-          return { x: nextX, clamped: false };
-        }
-        const dx = playerX - e.x;
-        if (!Number.isFinite(dx) || Math.abs(dx) < 0.0001) {
-          return { x: nextX, clamped: false };
-        }
-        if (Math.sign(dx) !== Math.sign(vx)) {
-          return { x: nextX, clamped: false };
-        }
-        const minDist = wolfGetStopDistance(e);
-        const stopTarget = playerX - Math.sign(dx) * minDist;
-        const currentDist = Math.abs(dx);
-        const nextDist = Math.abs(playerX - nextX);
-        const insideAlready = currentDist < (minDist - 0.0001);
-        if (nextDist < minDist && nextDist < currentDist) {
-          const stopX = insideAlready && Math.abs(playerX - stopTarget) > currentDist ? e.x : stopTarget;
-          return { x: stopX, clamped: true };
-        }
-        const crossed = !insideAlready && (currentDist - minDist) * (nextDist - minDist) <= 0 && nextDist <= currentDist;
-        if (crossed) {
-          return { x: stopTarget, clamped: true };
-        }
-        if (insideAlready && nextDist < currentDist) {
-          return { x: e.x, clamped: true };
-        }
-        return { x: nextX, clamped: false };
-      }
-
-      function wolfMaybeTriggerStopAttack(e, now, playerX) {
-        if (!e || e.dying || e.dead) return;
-        if (e.pendingLandingState) return;
-        if (e.attackQueue.length > 0) return;
-        if (now < (e.nextComboAt || 0)) return;
-        if (e.state !== 'stalk' && e.state !== 'runIn') return;
-        const dist = Math.abs((playerX ?? 0) - e.x);
-        if (dist > WOLF_CLOSE_BAND) return;
-        const attack = wolfSelectMeleeAttack();
-        wolfQueueMelee(e, attack, now);
       }
 
       function wolfQueueMelee(e, name, now = performance.now()) {
@@ -2732,13 +2678,7 @@
           e.vy += e.gravity * dt;
         }
 
-        const intendedX = e.x + e.vx * dt;
-        const clampResult = wolfClampApproachPosition(e, playerX, intendedX);
-        e.x = clampResult.x;
-        if (clampResult.clamped) {
-          e.vx = 0;
-          wolfMaybeTriggerStopAttack(e, now, playerX);
-        }
+        e.x += e.vx * dt;
         e.y += e.vy * dt;
         if (!e.playerSeen && e.patrolMin !== undefined && e.patrolMax !== undefined) {
           e.x = Math.max(e.patrolMin - 0.2, Math.min(e.patrolMax + 0.2, e.x));
