@@ -979,8 +979,14 @@
     };
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
+    const LAND_SMOKE_FX_META = { url: 'assets/sprites/VFX/Land smoke FX.png', frames: 8, fps: 16 };
+    const ROLL_SMOKE_FX_META = { url: 'assets/sprites/VFX/Roll smoke FX.png', frames: 5, fps: 16.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
+    const LAND_SMOKE_FX_SCALE = 0.95;
+    const ROLL_SMOKE_FX_SCALE = 0.85;
+    const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
+    const ROLL_SMOKE_FRAME_MS = 1000 / ROLL_SMOKE_FX_META.fps;
     const healFlash = {
       sprite: null,
       manager: null,
@@ -1000,6 +1006,8 @@
     const FX_LAYER_OFFSET = -0.035;
     const HIT_FX_POOL_SIZE = 20;
     const HURT_FX_POOL_SIZE = 16;
+    const LAND_SMOKE_FX_POOL_SIZE = 12;
+    const ROLL_SMOKE_FX_POOL_SIZE = 12;
 
     function createFxPool({ name, meta, capacity, frameMs, zOffset }) {
       const pool = {
@@ -1171,6 +1179,51 @@
       frameMs: HURT_FX_META.frameMs,
       zOffset: FX_LAYER_OFFSET
     });
+    const fxLandSmoke = createFxPool({
+      name: 'fx_land_smoke',
+      meta: LAND_SMOKE_FX_META,
+      capacity: LAND_SMOKE_FX_POOL_SIZE,
+      frameMs: LAND_SMOKE_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET
+    });
+    const fxRollSmoke = createFxPool({
+      name: 'fx_roll_smoke',
+      meta: ROLL_SMOKE_FX_META,
+      capacity: ROLL_SMOKE_FX_POOL_SIZE,
+      frameMs: ROLL_SMOKE_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET
+    });
+
+    function getPlayerFxContext() {
+      const baseSprite = playerSprite.sprite;
+      const basePos = baseSprite ? baseSprite.position : placeholder.position;
+      const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+      const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+        ? baseSprite.renderingGroupId
+        : null;
+      return { baseSprite, basePos, baseZ, renderGroup };
+    }
+
+    function spawnLandSmokeFx(now = performance.now()) {
+      const { basePos, baseZ, renderGroup } = getPlayerFxContext();
+      if (!basePos) return;
+      const facing = state.facing >= 0 ? 1 : -1;
+      const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE);
+      const footY = basePos.y - feetCenterY();
+      const spawnY = footY + playerSprite.sizeUnits * 0.05;
+      fxLandSmoke.spawn(basePos.x, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+    }
+
+    function spawnRollSmokeFx(now = performance.now()) {
+      const { basePos, baseZ, renderGroup } = getPlayerFxContext();
+      if (!basePos) return;
+      const facing = state.rollFacing != null ? (state.rollFacing >= 0 ? 1 : -1) : (state.facing >= 0 ? 1 : -1);
+      const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * ROLL_SMOKE_FX_SCALE);
+      const footY = basePos.y - feetCenterY();
+      const spawnY = footY + playerSprite.sizeUnits * 0.03;
+      const spawnX = basePos.x - facing * (playerSprite.sizeUnits * 0.35);
+      fxRollSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+    }
 
     // Attack/Action timing
     const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false, pendingHit: false, hitAt: 0, hitMeta: null };
@@ -1718,6 +1771,8 @@
       initHealFlash();
       fxHit.init();
       fxHurt.init();
+      fxLandSmoke.init();
+      fxRollSmoke.init();
       spawnShrine(-2, 0);
 
       // === Enemies ===
@@ -3383,6 +3438,7 @@
       state.rollInvulnApplied = false;
       Combat.setInvulnerable(playerActor, 'roll', false);
       setAnim('roll', true);
+      spawnRollSmokeFx(now);
     }
 
     // Light combo
@@ -3781,6 +3837,7 @@
       }
 
       if (justLanded) {
+        spawnLandSmokeFx(now);
         const landingMeta = SHEETS.landing;
         const falling = vyBefore < -0.2;
         const jumpBuffered = state.jumpBufferedAt &&
@@ -3833,6 +3890,8 @@
       updateHealFlash(now);
       fxHit.update(now);
       fxHurt.update(now);
+      fxLandSmoke.update(now);
+      fxRollSmoke.update(now);
       SpriteFlash.update(now);
 
       // Shadow follows X; tiny shrink when airborne
