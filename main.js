@@ -1786,7 +1786,7 @@
       }
 
       function wolfSelectMeleeAttack() {
-        return Math.random() < 0.88 ? 'bite' : 'claw';
+        return Math.random() < 0.75 ? 'bite' : 'claw';
       }
 
       const WOLF_ATTACK_DATA = {
