@@ -3515,6 +3515,7 @@
 
     function startRoll() {
       if (state.dead || state.rolling) return;
+      if (!state.onGround) return;
       const flasking = state.flasking;
       if (state.acting && !flasking) return;
       if (stats.stam < stats.rollCost) return;
