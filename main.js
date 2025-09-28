@@ -94,7 +94,7 @@
 
   const SPRITE_FLASH_DURATION_MS = 100;
   const SPRITE_FLASH_RESET_MS = 16;
-  const SPRITE_FLASH_INTENSITY = 25;
+  const SPRITE_FLASH_INTENSITY = 5;
   const SpriteFlash = (() => {
     const states = new Map();
 
@@ -858,7 +858,7 @@
       walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
       jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
-      rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0.10, iFrameEnd: 0.30, rollCost: 10,
+      rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0, iFrameEnd: 0.40, rollCost: 10,
       lightCost: 5, heavyCost: 18,
       lightDamage: 12,
       lightFinisherDamage: 16,
@@ -1762,7 +1762,7 @@
         }
         SpriteFlash.setBaseColor(e.sprite, new BABYLON.Color4(1, 1, 1, alpha), now);
       }
-      const WOLF_CLOSE_BAND = 1.5;
+      const WOLF_CLOSE_BAND = 2;
       const WOLF_LEAP_WEIGHT = 0.4;
       const WOLF_LEAP_COOLDOWN_RANGE_MS = { min: 1600, max: 2000 };
       const WOLF_LEAP_POST_ATTACK_GRACE_MS = 120;
@@ -1786,7 +1786,7 @@
       }
 
       function wolfSelectMeleeAttack() {
-        return Math.random() < 0.55 ? 'bite' : 'claw';
+        return Math.random() < 0.88 ? 'bite' : 'claw';
       }
 
       const WOLF_ATTACK_DATA = {
