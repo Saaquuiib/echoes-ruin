@@ -1286,7 +1286,7 @@
       const worldOffset = offsetLeft * facing;
       return snapToPixel(basePosX + worldOffset);
     }
-
+    
     function spawnLandSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
