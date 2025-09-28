@@ -5,6 +5,7 @@
 (() => {
   // ====== Tunables / Fallbacks ======
   const PPU = 32;                       // pixels per world unit
+  const MAX_FRAME_DT = 1 / 30;          // cap dt for gameplay stability per design requirement
   const FALLBACK_BASELINE_PX = 6;       // if pixel-read fails
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
@@ -3610,7 +3611,7 @@
     // === Game loop ===
     engine.runRenderLoop(() => {
       const now = performance.now();
-      const rawDt = engine.getDeltaTime() / 1000;
+      const rawDt = Math.min(engine.getDeltaTime() / 1000, MAX_FRAME_DT);
       const baseScale = slowMo ? 0.25 : 1;
       const hitstopActive = hitstopRemaining(now) > 0;
       const dtScale = hitstopActive ? 0 : baseScale;
