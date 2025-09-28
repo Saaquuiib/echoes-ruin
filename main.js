@@ -58,8 +58,21 @@
     return Math.max(min, Math.min(max, value));
   }
 
+  function snapToPixel(value) {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value * PPU) / PPU;
+  }
+
   // Scan bottom-most opaque pixel across all frames to compute baseline (empty rows below feet)
   async function detectBaselinePx(image, sheetW, sheetH, frames, frameW, frameH) {
+    const fallback = {
+      baselinePx: FALLBACK_BASELINE_PX,
+      bottomOpaqueY: frameH > 0 ? frameH - 1 : 0,
+      bottomLeftPx: 0,
+      bottomRightPx: Math.max(0, frameW - 1),
+      leftPx: 0,
+      rightPx: Math.max(0, frameW - 1)
+    };
     try {
       const c = document.createElement('canvas');
       c.width = sheetW; c.height = sheetH;
@@ -69,26 +82,49 @@
 
       const data = ctx.getImageData(0, 0, sheetW, sheetH).data;
       let maxBottomOpaqueY = -1;
+      let bottomLeftPx = frameW;
+      let bottomRightPx = -1;
+      let leftPx = frameW;
+      let rightPx = -1;
 
       for (let f = 0; f < frames; f++) {
         const x0 = f * frameW;
         for (let y = frameH - 1; y >= 0; y--) {
-          let found = false;
           const rowOffset = (y * sheetW + x0) * 4;
+          let rowMin = frameW;
+          let rowMax = -1;
           for (let x = 0; x < frameW; x++) {
             const idx = rowOffset + x * 4;
-            if (data[idx + 3] !== 0) { // non-transparent
-              maxBottomOpaqueY = Math.max(maxBottomOpaqueY, y);
-              found = true; break;
+            if (data[idx + 3] !== 0) {
+              rowMin = Math.min(rowMin, x);
+              rowMax = Math.max(rowMax, x);
+              leftPx = Math.min(leftPx, x);
+              rightPx = Math.max(rightPx, x);
             }
           }
-          if (found) break;
+          if (rowMax >= rowMin) {
+            if (y > maxBottomOpaqueY) {
+              maxBottomOpaqueY = y;
+              bottomLeftPx = rowMin;
+              bottomRightPx = rowMax;
+            } else if (y === maxBottomOpaqueY) {
+              bottomLeftPx = Math.min(bottomLeftPx, rowMin);
+              bottomRightPx = Math.max(bottomRightPx, rowMax);
+            }
+          }
         }
       }
-      if (maxBottomOpaqueY < 0) return FALLBACK_BASELINE_PX;
-      return (frameH - 1) - maxBottomOpaqueY;
+      if (maxBottomOpaqueY < 0) return fallback;
+      return {
+        baselinePx: (frameH - 1) - maxBottomOpaqueY,
+        bottomOpaqueY: maxBottomOpaqueY,
+        bottomLeftPx: bottomLeftPx < frameW ? bottomLeftPx : 0,
+        bottomRightPx: bottomRightPx >= 0 ? bottomRightPx : Math.max(0, frameW - 1),
+        leftPx: leftPx < frameW ? leftPx : 0,
+        rightPx: rightPx >= 0 ? rightPx : Math.max(0, frameW - 1)
+      };
     } catch {
-      return FALLBACK_BASELINE_PX;
+      return fallback;
     }
   }
 
@@ -734,6 +770,7 @@
       mgr: {},
       sizeByAnim: {},
       frameMeta: {},
+      extentsByAnim: {},
       sprite: null,
       state: 'idle',
       sizeUnits: 2,
@@ -1022,6 +1059,8 @@
         frameW: 0,
         frameH: 0,
         sizeUnits: 0,
+        baselineUnits: 0,
+        extents: null,
         totalDuration: meta.frames * frameMs,
         renderGroupId: null,
         entries: new Array(capacity),
@@ -1041,7 +1080,7 @@
 
       pool.init = async function initFxPool() {
         if (pool.ready) return true;
-        const { ok, w: sheetW, h: sheetH } = await loadImage(meta.url);
+        const { ok, img, w: sheetW, h: sheetH } = await loadImage(meta.url);
         if (!ok) {
           console.warn(`[FX] Sprite sheet missing for ${name}; skipping.`);
           return false;
@@ -1051,6 +1090,10 @@
         pool.frameW = frameW;
         pool.frameH = frameH;
         pool.sizeUnits = frameH / PPU;
+        const extents = await detectBaselinePx(img, sheetW, sheetH, meta.frames, frameW, frameH);
+        pool.extents = extents;
+        const baselinePx = extents?.baselinePx ?? FALLBACK_BASELINE_PX;
+        pool.baselineUnits = baselinePx / PPU;
         pool.totalDuration = meta.frames * frameMs;
         pool.manager = new BABYLON.SpriteManager(name, meta.url, capacity, { width: frameW, height: frameH }, scene);
         pool.manager.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
@@ -1204,14 +1247,55 @@
       return { baseSprite, basePos, baseZ, renderGroup };
     }
 
+    function computeFxCenterYFromFoot(pool, sizeUnits, footY) {
+      if (!pool) return snapToPixel(footY);
+      const baseSize = pool.sizeUnits || sizeUnits || 0;
+      const baselineUnits = (pool.baselineUnits || 0) * (baseSize > 0 ? (sizeUnits / baseSize) : 1);
+      const centerY = footY + (sizeUnits * 0.5) - baselineUnits;
+      return snapToPixel(centerY);
+    }
+
+    function computeFxOffsets(pool, sizeUnits) {
+      const frameH = pool?.frameH || 0;
+      const frameW = pool?.frameW || 0;
+      if (frameH <= 0 || frameW <= 0 || !sizeUnits) {
+        const half = (sizeUnits || 0) * 0.5;
+        return { offsetLeft: -half, offsetRight: half };
+      }
+      const pxToUnits = sizeUnits / frameH;
+      const widthUnits = frameW * pxToUnits;
+      const ext = pool?.extents || {};
+      const leftPx = (ext.bottomLeftPx != null) ? ext.bottomLeftPx : 0;
+      const rightPx = (ext.bottomRightPx != null) ? ext.bottomRightPx : frameW - 1;
+      const offsetLeft = -widthUnits * 0.5 + ((leftPx + 0.5) * pxToUnits);
+      const offsetRight = -widthUnits * 0.5 + ((rightPx + 0.5) * pxToUnits);
+      return { offsetLeft, offsetRight };
+    }
+
+    function computeRollFootX(basePosX, facing) {
+      const ext = playerSprite.extentsByAnim.roll;
+      const sizeUnits = playerSprite.sizeUnits || 0;
+      if (!ext || !ext.frameH || !ext.frameW || sizeUnits <= 0) {
+        const fallbackOffset = sizeUnits > 0 ? sizeUnits * 0.35 : playerSprite.sizeUnits * 0.35;
+        return snapToPixel(basePosX - facing * fallbackOffset);
+      }
+      const pxToUnits = sizeUnits / ext.frameH;
+      const widthUnits = ext.frameW * pxToUnits;
+      const leftPx = (ext.bottomLeftPx != null) ? ext.bottomLeftPx : 0;
+      const offsetLeft = -widthUnits * 0.5 + ((leftPx + 0.5) * pxToUnits);
+      const worldOffset = offsetLeft * facing;
+      return snapToPixel(basePosX + worldOffset);
+    }
+    
     function spawnLandSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
       const facing = state.facing >= 0 ? 1 : -1;
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE);
-      const footY = basePos.y - feetCenterY();
-      const spawnY = footY + playerSprite.sizeUnits * 0.05;
-      fxLandSmoke.spawn(basePos.x, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY);
+      const spawnX = snapToPixel(basePos.x);
+      fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
 
     function spawnRollSmokeFx(now = performance.now()) {
@@ -1219,9 +1303,12 @@
       if (!basePos) return;
       const facing = state.rollFacing != null ? (state.rollFacing >= 0 ? 1 : -1) : (state.facing >= 0 ? 1 : -1);
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * ROLL_SMOKE_FX_SCALE);
-      const footY = basePos.y - feetCenterY();
-      const spawnY = footY + playerSprite.sizeUnits * 0.03;
-      const spawnX = basePos.x - facing * (playerSprite.sizeUnits * 0.35);
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const spawnY = computeFxCenterYFromFoot(fxRollSmoke, sizeUnits, footY);
+      const footX = computeRollFootX(basePos.x, facing);
+      const fxOffsets = computeFxOffsets(fxRollSmoke, sizeUnits);
+      const frontOffset = Number.isFinite(fxOffsets.offsetRight) ? fxOffsets.offsetRight : sizeUnits * 0.5;
+      const spawnX = snapToPixel(footX - (frontOffset * facing));
       fxRollSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
 
@@ -1330,9 +1417,24 @@
       playerSprite.sizeByAnim[metaKey] = sizeUnits;
       playerSprite.frameMeta[metaKey] = { frameW, frameH };
 
+      const extents = await detectBaselinePx(img, sheetW, sheetH, meta.frames, frameW, frameH);
+      if (extents) {
+        playerSprite.extentsByAnim[metaKey] = {
+          frameW,
+          frameH,
+          baselinePx: extents.baselinePx,
+          baselineUnits: (extents.baselinePx ?? FALLBACK_BASELINE_PX) / PPU,
+          bottomOpaqueY: extents.bottomOpaqueY,
+          bottomLeftPx: extents.bottomLeftPx,
+          bottomRightPx: extents.bottomRightPx,
+          leftPx: extents.leftPx,
+          rightPx: extents.rightPx
+        };
+      }
+
       // Baseline auto-detect (idle only)
       if (computeBaseline) {
-        const baselinePx = await detectBaselinePx(img, sheetW, sheetH, meta.frames, frameW, frameH);
+        const baselinePx = extents?.baselinePx ?? FALLBACK_BASELINE_PX;
         playerSprite.baselineUnits = baselinePx / PPU;
         console.log(`[SpriteBaseline] detected baselinePx=${baselinePx} → baselineUnits=${playerSprite.baselineUnits.toFixed(3)}`);
       }
@@ -2254,7 +2356,8 @@
         const frameW = Math.floor(sheetW / frames);
         const frameH = sheetH;
         if (computeBaseline) {
-          const baselinePx = await detectBaselinePx(img, sheetW, sheetH, frames, frameW, frameH);
+          const extents = await detectBaselinePx(img, sheetW, sheetH, frames, frameW, frameH);
+          const baselinePx = extents?.baselinePx ?? FALLBACK_BASELINE_PX;
           const baselineUnits = baselinePx / PPU;
           if (!e.baselines) e.baselines = {};
           e.baselines[name] = baselineUnits;
