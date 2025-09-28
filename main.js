@@ -1899,6 +1899,7 @@
         e.comboIndex = 0;
         e.runInState = null;
         e.pendingCombo = null;
+        e.readyState = null;
         const launched = startWolfAttack(e, name);
         if (launched === 'defer') return false;
         return !!launched;
@@ -1915,6 +1916,7 @@
         e.comboIndex = 0;
         e.runInState = null;
         e.pendingCombo = null;
+        e.readyState = null;
         const launched = startWolfAttack(e, 'leap');
         if (launched === 'defer') return false;
         return !!launched;
@@ -1936,11 +1938,42 @@
         e.attackQueue = [];
         e.comboIndex = 0;
         e.pendingCombo = null;
+        e.readyState = null;
         e.nextComboAt = now + duration;
         e.facing = dir;
         e.vx = dir * WOLF_RUN_IN_SPEED;
         e.vy = 0;
         if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
+      }
+
+      function wolfIsHeroInCloseRange(e, tolerance = 0) {
+        if (!e) return false;
+        if (!e.playerSeen && e.state === 'patrol') return false;
+        const playerPos = playerSprite.sprite?.position;
+        const playerX = playerPos?.x;
+        if (playerX == null) return false;
+        return Math.abs(playerX - e.x) <= (WOLF_CLOSE_BAND + tolerance);
+      }
+
+      function startWolfReady(e, delayMs = 0, now = performance.now()) {
+        if (!wolfIsHeroInCloseRange(e)) {
+          e.readyState = null;
+          return false;
+        }
+        const holdMs = Math.max(0, delayMs || 0);
+        const holdUntil = now + holdMs;
+        e.state = 'ready';
+        e.stateUntil = holdUntil;
+        e.readyState = {
+          start: now,
+          holdUntil
+        };
+        e.runInState = null;
+        e.vx = 0;
+        e.vy = 0;
+        if (e.mgr.ready) setEnemyAnim(e, 'ready');
+        else if (e.mgr.run) setEnemyAnim(e, 'run');
+        return true;
       }
 
       function spawnWolfHitbox(e, def) {
@@ -1994,6 +2027,7 @@
         const attack = { name, def, start: now, spawned: false };
         e.currentAttack = attack;
         e.pendingCombo = null;
+        e.readyState = null;
         if (def.type === 'maneuver') {
           e.state = 'leap';
           const playerPos = playerSprite.sprite?.position;
@@ -2054,21 +2088,28 @@
         e.attackHitAt = 0;
         e.attackEndAt = 0;
         e.leapState = null;
+        e.readyState = null;
+        const holdReady = !!(attackDef && attackDef.type !== 'maneuver' && wolfIsHeroInCloseRange(e));
         if (e.attackQueue && e.comboIndex < e.attackQueue.length - 1) {
           e.comboIndex += 1;
           const nextName = e.attackQueue[e.comboIndex];
           const gapBase = attackDef ? (attackDef.comboGapMs ?? attackDef.landBufferMs ?? 150) : 150;
           const gap = Math.max(80, wolfApplyJitter(gapBase, attackDef?.comboGapJitter ?? 0.12));
           const gapUntil = now + gap;
-          e.state = 'recover';
           e.stateUntil = gapUntil;
           e.pendingCombo = { name: nextName, at: gapUntil };
           e.nextComboAt = Math.max(e.nextComboAt, gapUntil);
+          if (!(holdReady && startWolfReady(e, gap, now))) {
+            e.pendingCombo = null;
+            e.attackQueue = [];
+            e.comboIndex = 0;
+            e.state = 'stalk';
+            if (e.mgr.run) setEnemyAnim(e, 'run');
+          }
         } else {
           e.attackQueue = [];
           e.comboIndex = 0;
           e.pendingCombo = null;
-          e.state = 'recover';
           const recoveryBase = attackDef ? (attackDef.recoveryMs ?? attackDef.landBufferMs ?? 380) : 380;
           const cooldownBase = attackDef ? (attackDef.cooldownMs ?? 760) : 760;
           const recovery = Math.max(140, wolfApplyJitter(recoveryBase, attackDef?.recoveryJitter ?? 0.12));
@@ -2076,6 +2117,10 @@
           e.stateUntil = now + recovery;
           e.nextComboAt = now + cooldown;
           e.leapGraceUntil = now + WOLF_LEAP_POST_ATTACK_GRACE_MS;
+          if (!(holdReady && startWolfReady(e, recovery, now))) {
+            e.state = e.playerSeen ? 'stalk' : 'patrol';
+            if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+          }
         }
       }
 
@@ -2279,11 +2324,13 @@
           leapCooldownUntil: 0,
           leapGraceUntil: 0,
           pendingCombo: null,
+          readyState: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           dead: false, combat: null, hurtbox: null
         };
         await loadEnemySheet(e, 'run', 'assets/sprites/Mobs/wolf/Run.png', 14, true, true);
+        await loadEnemySheet(e, 'ready', 'assets/sprites/Mobs/wolf/Ready.png', 12, true, true);
         await loadEnemySheet(e, 'bite', 'assets/sprites/Mobs/wolf/Bite.png', 12, false, true);
         await loadEnemySheet(e, 'claw', 'assets/sprites/Mobs/wolf/Claw.png', 12, false, true);
         await loadEnemySheet(e, 'hit', 'assets/sprites/Mobs/wolf/Hit.png', 12, false, true);
@@ -2328,6 +2375,7 @@
             e.attackHitAt = 0;
             e.attackEndAt = 0;
             e.pendingCombo = null;
+            e.readyState = null;
             if (e.state === 'leap' && !e.onGround) {
               e.pendingLandingState = { type: 'hit', until: now + 240 };
               e.hitReactUntil = now + 240;
@@ -2355,6 +2403,7 @@
             e.attackHitAt = 0;
             e.attackEndAt = 0;
             e.pendingCombo = null;
+            e.readyState = null;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
@@ -2648,36 +2697,74 @@
             }
             break;
           }
-          case 'recover': {
-            e.vx *= 0.85;
+          case 'recover':
+          case 'ready': {
+            if (e.state === 'recover') {
+              e.state = 'ready';
+            }
+            if (!e.readyState) {
+              e.readyState = { start: now, holdUntil: e.stateUntil || now };
+            }
+            if (dying) {
+              e.vx *= 0.85;
+              break;
+            }
+            const close = wolfIsHeroInCloseRange(e);
+            if (!close || e.pendingLandingState) {
+              if (!e.pendingLandingState) {
+                e.pendingCombo = null;
+                e.state = e.playerSeen ? 'stalk' : 'patrol';
+                if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+              }
+              e.readyState = null;
+              break;
+            }
+            e.vx += (0 - e.vx) * Math.min(1, 14 * dt);
+            e.vy = 0;
+            e.facing = dx >= 0 ? 1 : -1;
+            if (e.mgr.ready) setEnemyAnim(e, 'ready');
             const pendingCombo = e.pendingCombo;
-            if (!dying && !e.pendingLandingState && pendingCombo && now >= pendingCombo.at) {
+            if (!e.pendingLandingState && pendingCombo && now >= pendingCombo.at) {
               e.pendingCombo = null;
               if (pendingCombo.name === 'leap' && Math.abs(dx) < WOLF_CLOSE_BAND) {
                 const fallback = wolfSelectMeleeAttack();
                 if (wolfQueueMelee(e, fallback, now)) {
+                  e.readyState = null;
                   break;
                 }
                 e.state = 'stalk';
+                e.readyState = null;
                 if (e.mgr.run) setEnemyAnim(e, 'run');
                 break;
               }
               const launch = startWolfAttack(e, pendingCombo.name);
               if (launch && launch !== 'defer') {
+                e.readyState = null;
                 break;
               }
               if (launch === 'defer') {
+                e.readyState = null;
                 if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
                 break;
               }
               e.state = 'stalk';
+              e.readyState = null;
               if (e.mgr.run) setEnemyAnim(e, 'run');
               break;
             }
-            if (!dying && now >= e.stateUntil) {
-              e.state = 'stalk';
-              e.pendingCombo = null;
-              if (e.mgr.run) setEnemyAnim(e, 'run');
+            const holdUntil = Math.max(e.readyState?.holdUntil ?? 0, e.stateUntil ?? 0);
+            const canAct = now >= holdUntil && now >= e.nextComboAt && e.attackQueue.length === 0;
+            if (canAct) {
+              const attack = wolfSelectMeleeAttack();
+              if (wolfQueueMelee(e, attack, now)) {
+                e.readyState = null;
+                break;
+              }
+              if (e.state === 'stalk') {
+                e.readyState = null;
+                if (e.mgr.run) setEnemyAnim(e, 'run');
+                break;
+              }
             }
             break;
           }
@@ -2743,9 +2830,12 @@
             }
           }
         }
-        if (!dying && e.state === 'recover' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
-          e.state = e.playerSeen ? 'stalk' : 'patrol';
-          if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+        if (!dying && e.state === 'ready' && e.comboIndex === 0 && e.attackQueue.length === 0 && e.onGround && now >= e.stateUntil) {
+          if (!wolfIsHeroInCloseRange(e)) {
+            e.readyState = null;
+            e.state = e.playerSeen ? 'stalk' : 'patrol';
+            if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+          }
         }
 
         if (e.sprite) {
