@@ -1021,7 +1021,7 @@
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
     const LAND_SMOKE_FX_SCALE = 0.4;
-    const ROLL_SMOKE_FX_SCALE = 0.4;
+    const ROLL_SMOKE_FX_SCALE = 0.3;
     const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
     const ROLL_SMOKE_FRAME_MS = 1000 / ROLL_SMOKE_FX_META.fps;
     const healFlash = {
@@ -1293,7 +1293,7 @@
       const facing = state.facing >= 0 ? 1 : -1;
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE);
       const footY = snapToPixel(basePos.y - feetCenterY());
-      const spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY);
+      const spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY - 0.1);
       const spawnX = snapToPixel(basePos.x);
       fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
@@ -1301,14 +1301,14 @@
     function spawnRollSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
-      const facing = state.rollFacing != null ? (state.rollFacing >= 0 ? 1 : -1) : (state.facing >= 0 ? 1 : -1);
+      const facing = state.rollFacing != null ? (state.rollFacing >= 0 ? -1 : 1) : (state.facing >= 0 ? -1 : 1);
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * ROLL_SMOKE_FX_SCALE);
       const footY = snapToPixel(basePos.y - feetCenterY());
-      const spawnY = computeFxCenterYFromFoot(fxRollSmoke, sizeUnits, footY);
+      const spawnY = computeFxCenterYFromFoot(fxRollSmoke, sizeUnits, footY - 0.1);
       const footX = computeRollFootX(basePos.x, facing);
       const fxOffsets = computeFxOffsets(fxRollSmoke, sizeUnits);
       const frontOffset = Number.isFinite(fxOffsets.offsetRight) ? fxOffsets.offsetRight : sizeUnits * 0.5;
-      const spawnX = snapToPixel(footX - (frontOffset * facing));
+      const spawnX = snapToPixel(footX + (frontOffset * facing));
       fxRollSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
 
