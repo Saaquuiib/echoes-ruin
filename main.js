@@ -855,7 +855,7 @@
     const stats = {
       hpMax: 100, hp: 100,
       stamMax: 100, stam: 100, stamRegenPerSec: 22,
-      walkMax: 2.4, runMax: 3.3, accel: 12.0, decel: 14.0,
+      walkMax: 2.5, runMax: 4, accel: 12.0, decel: 14.0,
       jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0, iFrameEnd: 0.40, rollCost: 10,
@@ -1857,7 +1857,7 @@
       const BAT_VIEW_MARGIN = 0.5;
       const BAT_ATTACK_ACTIVE_FRAMES = { start: 3, end: 7 };
       const BAT_ATTACK_COOLDOWN_MS = 900;
-      const BAT_FOLLOW_SPEED = 2.4;
+      const BAT_FOLLOW_SPEED = 3.2;
       const BAT_FOLLOW_ACCEL = 9;
       const BAT_RETURN_SPEED = 1.6;
       const BAT_RETURN_ACCEL = 6;
