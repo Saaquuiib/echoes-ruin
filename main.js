@@ -2587,7 +2587,7 @@
             e.facing = dx >= 0 ? 1 : -1;
             const inClose = absDx < WOLF_CLOSE_BAND;
             const canAct = !e.pendingLandingState && e.attackQueue.length === 0 && now >= e.nextComboAt;
-            if (canAct) {
+            if (canAct && e.onGround) {
               if (inClose) {
                 const attack = wolfSelectMeleeAttack();
                 wolfQueueMelee(e, attack, now);
@@ -2616,6 +2616,9 @@
               run.lastAdvanceAt = now;
             }
             const inClose = absDx < WOLF_CLOSE_BAND;
+            if (!e.onGround) {
+              break;
+            }
             if (inClose) {
               e.runInState = null;
               const attack = wolfSelectMeleeAttack();
@@ -2722,6 +2725,9 @@
             if (e.mgr.ready) setEnemyAnim(e, 'ready');
             const pendingCombo = e.pendingCombo;
             if (!e.pendingLandingState && pendingCombo && now >= pendingCombo.at) {
+              if (!e.onGround) {
+                break;
+              }
               e.pendingCombo = null;
               if (pendingCombo.name === 'leap' && Math.abs(dx) < WOLF_CLOSE_BAND) {
                 const fallback = wolfSelectMeleeAttack();
@@ -2751,7 +2757,7 @@
             }
             const holdUntil = Math.max(e.readyState?.holdUntil ?? 0, e.stateUntil ?? 0);
             const canAct = now >= holdUntil && now >= e.nextComboAt && e.attackQueue.length === 0;
-            if (canAct) {
+            if (canAct && e.onGround) {
               const attack = wolfSelectMeleeAttack();
               if (wolfQueueMelee(e, attack, now)) {
                 e.readyState = null;
