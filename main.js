@@ -1757,30 +1757,37 @@
         }
         SpriteFlash.setBaseColor(e.sprite, new BABYLON.Color4(1, 1, 1, alpha), now);
       }
-      const WOLF_COMBO_TABLE = {
-        close: [
-          ['bite'],
-          ['claw'],
-          ['bite', 'claw'],
-          ['bite', 'bite', 'claw']
-        ],
-        mid: [
-          ['bite'],
-          ['bite', 'claw'],
-          ['leap', 'bite'],
-          ['leap', 'bite', 'claw']
-        ],
-        far: [
-          ['leap', 'bite'],
-          ['leap', 'bite', 'claw'],
-          ['leap', 'bite', 'bite']
-        ]
-      };
+      const WOLF_CLOSE_BAND = 1.5;
+      const WOLF_LEAP_WEIGHT = 0.4;
+      const WOLF_LEAP_COOLDOWN_RANGE_MS = { min: 1600, max: 2000 };
+      const WOLF_LEAP_POST_ATTACK_GRACE_MS = 120;
+      const WOLF_RUN_IN_DURATION_MS = { min: 600, max: 900 };
+      const WOLF_RUN_IN_PROMOTE_MS = { min: 250, max: 400 };
+      const WOLF_RUN_IN_SPEED = 3.6;
+      const WOLF_BASE_STALK_SPEED_FAR = 3.1;
+      const WOLF_BASE_STALK_SPEED_NEAR = 2.7;
+      const WOLF_AIR_STEER = 18;
+
+      function wolfRandRange(min, max) {
+        if (!Number.isFinite(min) || !Number.isFinite(max)) return min || max || 0;
+        if (max <= min) return min;
+        return min + Math.random() * (max - min);
+      }
+
+      function wolfApplyJitter(base, pct = 0.12) {
+        if (!Number.isFinite(base) || base === 0 || !Number.isFinite(pct) || pct <= 0) return base;
+        const span = base * pct;
+        return base + (Math.random() * 2 - 1) * span;
+      }
+
+      function wolfSelectMeleeAttack() {
+        return Math.random() < 0.55 ? 'bite' : 'claw';
+      }
 
       const WOLF_ATTACK_DATA = {
         bite: {
           anim: 'bite',
-          hitFrac: 0.46,
+          hitFrac: 0.6,
           durationMs: 190,
           damage: 12,
           width: e => e.sizeUnits * 0.54,
@@ -1788,13 +1795,16 @@
           offset: e => ({ x: e.sizeUnits * 0.28, y: -e.sizeUnits * 0.05 }),
           maxRange: 1.05,
           forwardImpulse: 2.2,
-          comboGapMs: 130,
-          recoveryMs: 340,
-          cooldownMs: 760
+          comboGapMs: 150,
+          recoveryMs: 380,
+          cooldownMs: 820,
+          windupMs: 150,
+          windupJitter: 0.15,
+          recoveryJitter: 0.12
         },
         claw: {
           anim: 'claw',
-          hitFrac: 0.5,
+          hitFrac: 0.62,
           durationMs: 200,
           damage: 15,
           width: e => e.sizeUnits * 0.6,
@@ -1802,18 +1812,26 @@
           offset: e => ({ x: e.sizeUnits * 0.34, y: -e.sizeUnits * 0.02 }),
           maxRange: 1.25,
           forwardImpulse: 2.6,
-          comboGapMs: 160,
-          recoveryMs: 420,
-          cooldownMs: 840
+          comboGapMs: 170,
+          recoveryMs: 440,
+          cooldownMs: 880,
+          windupMs: 160,
+          windupJitter: 0.15,
+          recoveryJitter: 0.12
         },
         leap: {
           type: 'maneuver',
-          jumpVel: 6.8,
-          forwardImpulse: 5,
+          jumpVel: 7.2,
           maxDurationMs: 900,
-          minAirTime: 0.28,
-          landBufferMs: 140,
-          cooldownMs: 520
+          minAirTime: 0.32,
+          recoveryMs: 220,
+          cooldownMs: 1800,
+          cooldownJitter: 0.12,
+          windupMs: 140,
+          windupJitter: 0.12,
+          recoveryJitter: 0.15,
+          maxAirSpeed: 6.2,
+          airSteer: 22
         }
       };
 
@@ -1867,44 +1885,68 @@
         return target;
       }
 
-      function chooseWolfCombo(e, distance) {
-        let bucket = 'far';
-        if (distance < 1.2) bucket = 'close';
-        else if (distance < 3.2) bucket = 'mid';
-        const allowLeap = distance >= 2.4;
-        const base = WOLF_COMBO_TABLE[bucket] || WOLF_COMBO_TABLE.close;
-        let pool = base
-          .filter(seq => seq && (allowLeap || !seq.includes('leap')))
-          .map(seq => seq.slice());
-        if (e.packRole === 'leader') {
-          pool.push(...WOLF_COMBO_TABLE.mid
-            .filter(seq => seq && seq.length > 1 && (allowLeap || !seq.includes('leap')))
-            .map(seq => seq.slice()));
-        } else if (e.packRole && e.packRole.startsWith('flank')) {
-          pool.push(['claw'], ['bite', 'claw']);
-        }
-        if (!allowLeap) {
-          pool = pool.filter(seq => seq && !seq.includes('leap'));
-        }
-        if (pool.length === 0) {
-          pool = WOLF_COMBO_TABLE.close
-            .filter(seq => seq && !seq.includes('leap'))
-            .map(seq => seq.slice());
-        }
-        if (distance > 1.8) {
-          const withLeap = pool.filter(seq => seq && seq.includes('leap'));
-          if (withLeap.length > 0) pool = withLeap.map(seq => seq.slice());
-        }
-        const choice = randChoice(pool);
-        return choice ? choice.slice() : [];
+      function wolfQueueMelee(e, name, now = performance.now()) {
+        const def = WOLF_ATTACK_DATA[name];
+        if (!def) return false;
+        const baseWindup = def.windupMs ?? 140;
+        const delay = Math.max(80, wolfApplyJitter(baseWindup, def.windupJitter ?? 0.1));
+        e.attackQueue = [name];
+        e.comboIndex = 0;
+        e.nextComboAt = now + delay + 80;
+        e.runInState = null;
+        startWolfReady(e, delay, { attackName: name });
+        return true;
       }
 
-      function startWolfReady(e, delayMs = 220) {
+      function wolfQueueLeap(e, now = performance.now(), distance = Infinity) {
+        const def = WOLF_ATTACK_DATA.leap;
+        if (!def) return false;
+        if (distance < WOLF_CLOSE_BAND) return false;
+        if (now < (e.leapCooldownUntil || 0)) return false;
+        if (now < (e.leapGraceUntil || 0)) return false;
+        const delay = Math.max(100, wolfApplyJitter(def.windupMs ?? 140, def.windupJitter ?? 0.12));
+        e.attackQueue = ['leap'];
+        e.comboIndex = 0;
+        e.nextComboAt = now + delay + 100;
+        e.runInState = null;
+        startWolfReady(e, delay, { attackName: 'leap' });
+        return true;
+      }
+
+      function wolfStartRunIn(e, dx, now = performance.now()) {
+        const dir = dx >= 0 ? 1 : -1;
+        const duration = wolfRandRange(WOLF_RUN_IN_DURATION_MS.min, WOLF_RUN_IN_DURATION_MS.max);
+        const promoteDelay = wolfRandRange(WOLF_RUN_IN_PROMOTE_MS.min, WOLF_RUN_IN_PROMOTE_MS.max);
+        e.state = 'runIn';
+        e.runInState = {
+          start: now,
+          endAt: now + duration,
+          promoteDelay,
+          lastAdvanceAt: now,
+          lastAdvanceX: e.x,
+          dir
+        };
+        e.attackQueue = [];
+        e.comboIndex = 0;
+        e.windupAttack = null;
+        e.nextComboAt = now + duration;
+        e.facing = dir;
+        e.vx = dir * WOLF_RUN_IN_SPEED;
+        e.vy = 0;
+        if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
+      }
+
+      function startWolfReady(e, delayMs = 220, opts = {}) {
         const now = performance.now();
         e.state = 'ready';
         e.readyUntil = now + delayMs;
         e.vx = 0;
         e.vy = 0;
+        if (opts.attackName) {
+          e.windupAttack = { name: opts.attackName, until: e.readyUntil };
+        } else if (!opts.preserveWindup) {
+          e.windupAttack = null;
+        }
         if (e.mgr.ready) setEnemyAnim(e, 'ready');
       }
 
@@ -1949,16 +1991,35 @@
         e.currentAttack = attack;
         if (def.type === 'maneuver') {
           e.state = 'leap';
+          const playerPos = playerSprite.sprite?.position;
+          const targetX = playerPos?.x ?? (e.x + e.facing * 2);
+          const gravity = e.gravity ?? -20;
+          const jumpVel = def.jumpVel ?? 7;
+          const gravityMag = Math.max(1, Math.abs(gravity));
+          let flightTime = (2 * jumpVel) / gravityMag;
+          if (def.minAirTime != null) {
+            flightTime = Math.max(flightTime, def.minAirTime);
+          }
+          const maxAirSpeed = def.maxAirSpeed ?? WOLF_RUN_IN_SPEED;
+          const desiredVx = clamp((targetX - e.x) / flightTime, -maxAirSpeed, maxAirSpeed);
+          const cooldownBase = def.cooldownMs ?? wolfRandRange(WOLF_LEAP_COOLDOWN_RANGE_MS.min, WOLF_LEAP_COOLDOWN_RANGE_MS.max);
+          const cooldown = Math.max(WOLF_LEAP_POST_ATTACK_GRACE_MS, wolfApplyJitter(cooldownBase, def.cooldownJitter ?? 0.15));
           e.leapState = {
             def,
             start: now,
-            endBy: now + (def.maxDurationMs ?? 800),
+            endBy: now + (def.maxDurationMs ?? Math.round(flightTime * 1000)),
             airborneAt: now,
-            landedAt: 0
+            landedAt: 0,
+            targetX,
+            flightTime,
+            initialVx: desiredVx,
+            initialVy: jumpVel
           };
-          e.vx = (def.forwardImpulse ?? 0) * e.facing;
-          e.vy = def.jumpVel ?? 0;
+          e.vx = desiredVx;
+          e.vy = jumpVel;
           e.onGround = false;
+          e.leapCooldownUntil = now + cooldown;
+          e.runInState = null;
           if (e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
         } else {
           e.state = 'attack';
@@ -1976,6 +2037,7 @@
           e.attackEndAt = attack.endAt;
           e.vx = def.forwardImpulse ? def.forwardImpulse * e.facing : 0;
         }
+        e.windupAttack = null;
         return true;
       }
 
@@ -1990,16 +2052,22 @@
         e.leapState = null;
         if (e.attackQueue && e.comboIndex < e.attackQueue.length - 1) {
           e.comboIndex += 1;
-          const gap = attackDef ? (attackDef.comboGapMs ?? attackDef.landBufferMs ?? 150) : 150;
-          startWolfReady(e, gap);
+          const nextName = e.attackQueue[e.comboIndex];
+          const gapBase = attackDef ? (attackDef.comboGapMs ?? attackDef.landBufferMs ?? 150) : 150;
+          const gap = Math.max(80, wolfApplyJitter(gapBase, attackDef?.comboGapJitter ?? 0.12));
+          startWolfReady(e, gap, { attackName: nextName });
         } else {
           e.attackQueue = [];
           e.comboIndex = 0;
           e.state = 'recover';
-          const recovery = attackDef ? (attackDef.recoveryMs ?? attackDef.landBufferMs ?? 380) : 380;
-          const cooldown = attackDef ? (attackDef.cooldownMs ?? 760) : 760;
+          const recoveryBase = attackDef ? (attackDef.recoveryMs ?? attackDef.landBufferMs ?? 380) : 380;
+          const cooldownBase = attackDef ? (attackDef.cooldownMs ?? 760) : 760;
+          const recovery = Math.max(140, wolfApplyJitter(recoveryBase, attackDef?.recoveryJitter ?? 0.12));
+          const cooldown = Math.max(recovery, wolfApplyJitter(cooldownBase, attackDef?.cooldownJitter ?? 0.12));
           e.stateUntil = now + recovery;
           e.nextComboAt = now + cooldown;
+          e.leapGraceUntil = now + WOLF_LEAP_POST_ATTACK_GRACE_MS;
+          e.windupAttack = null;
         }
       }
 
@@ -2199,6 +2267,10 @@
           attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
           nextComboAt: 0, leapState: null, hitReactUntil: 0,
           pendingLandingState: null,
+          runInState: null,
+          leapCooldownUntil: 0,
+          leapGraceUntil: 0,
+          windupAttack: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           dead: false, combat: null, hurtbox: null
@@ -2453,24 +2525,69 @@
             if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
             const targetX = computeWolfTargetX(e, playerX);
             const diff = targetX - e.x;
-            const speed = absDx > 4 ? 3.3 : 2.9;
+            const speed = absDx > 4 ? WOLF_BASE_STALK_SPEED_FAR : WOLF_BASE_STALK_SPEED_NEAR;
             if (Math.abs(diff) > 0.1) {
               e.vx = Math.sign(diff) * speed;
             } else {
               e.vx = 0;
             }
             e.facing = dx >= 0 ? 1 : -1;
-            if (!e.pendingLandingState && e.attackQueue.length === 0 && now >= e.nextComboAt) {
-              if (absDx <= 5.2) {
-                const combo = chooseWolfCombo(e, absDx);
-                if (combo.length > 0) {
-                  e.attackQueue = combo;
-                  e.comboIndex = 0;
-                  e.nextComboAt = now + 200; // prevent instant reselection
-                  const readyDelay = absDx > 2.6 ? 160 : 200;
-                  startWolfReady(e, readyDelay);
+            const inClose = absDx < WOLF_CLOSE_BAND;
+            const canAct = !e.pendingLandingState && e.attackQueue.length === 0 && now >= e.nextComboAt;
+            if (canAct) {
+              if (inClose) {
+                const attack = wolfSelectMeleeAttack();
+                wolfQueueMelee(e, attack, now);
+              } else {
+                const leapReady = now >= e.leapCooldownUntil && now >= e.leapGraceUntil;
+                const doLeap = leapReady && Math.random() < WOLF_LEAP_WEIGHT;
+                if (doLeap && wolfQueueLeap(e, now, absDx)) {
+                  // queued leap
+                } else {
+                  wolfStartRunIn(e, dx, now);
                 }
               }
+            }
+            break;
+          }
+          case 'runIn': {
+            if (dying) { e.vx *= 0.9; break; }
+            const run = e.runInState;
+            if (!run) { e.state = 'stalk'; break; }
+            const dir = dx >= 0 ? 1 : -1;
+            e.facing = dir;
+            e.vx = dir * WOLF_RUN_IN_SPEED;
+            e.vy = 0;
+            if (Math.abs(e.x - run.lastAdvanceX) > 0.03) {
+              run.lastAdvanceX = e.x;
+              run.lastAdvanceAt = now;
+            }
+            const inClose = absDx < WOLF_CLOSE_BAND;
+            if (inClose) {
+              e.runInState = null;
+              const attack = wolfSelectMeleeAttack();
+              wolfQueueMelee(e, attack, now);
+              break;
+            }
+            if (now - run.lastAdvanceAt >= run.promoteDelay) {
+              if (now >= e.leapCooldownUntil && now >= e.leapGraceUntil) {
+                e.runInState = null;
+                if (wolfQueueLeap(e, now, absDx)) {
+                  break;
+                }
+                // fallback to extended run-in if leap denied
+                run.lastAdvanceAt = now;
+                e.state = 'stalk';
+                e.nextComboAt = now + 120;
+                break;
+              } else {
+                run.lastAdvanceAt = now;
+              }
+            }
+            if (now >= run.endAt) {
+              e.runInState = null;
+              e.state = 'stalk';
+              e.nextComboAt = now + 160;
             }
             break;
           }
@@ -2483,6 +2600,11 @@
               if (!name) {
                 finishWolfAttack(e);
               } else {
+                if (name === 'leap' && Math.abs(dx) < WOLF_CLOSE_BAND) {
+                  const fallback = wolfSelectMeleeAttack();
+                  wolfQueueMelee(e, fallback, now);
+                  break;
+                }
                 const launch = startWolfAttack(e, name);
                 if (launch === 'defer') {
                   break;
@@ -2526,6 +2648,20 @@
               if (e.vy > 0.3 && e.mgr.jumpUp) setEnemyAnim(e, 'jumpUp');
               else if (e.vy < -0.3 && e.mgr.jumpDown) setEnemyAnim(e, 'jumpDown');
               else if (e.mgr.jumpMid) setEnemyAnim(e, 'jumpMid');
+              if (!e.onGround) {
+                const steer = leap.def?.airSteer ?? WOLF_AIR_STEER;
+                const maxSpeed = leap.def?.maxAirSpeed ?? WOLF_RUN_IN_SPEED;
+                const elapsed = Math.max(0, (now - leap.start) / 1000);
+                const total = Math.max(elapsed + 0.001, leap.flightTime ?? elapsed + 0.001);
+                const remaining = Math.max(0.08, total - elapsed);
+                const desiredVx = clamp((leap.targetX - e.x) / remaining, -maxSpeed, maxSpeed);
+                const diff = desiredVx - e.vx;
+                const maxStep = steer * dt;
+                if (maxStep > 0) {
+                  const adj = Math.abs(diff) <= maxStep ? diff : Math.sign(diff) * maxStep;
+                  e.vx += adj;
+                }
+              }
               if (!dying && !e.pendingLandingState && now >= leap.endBy) {
                 finishWolfAttack(e, { def: leap.def });
               } else if ((dying || e.pendingLandingState) && now >= leap.endBy) {
