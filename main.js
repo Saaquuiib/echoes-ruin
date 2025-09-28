@@ -1888,14 +1888,14 @@
       function wolfQueueMelee(e, name, now = performance.now()) {
         const def = WOLF_ATTACK_DATA[name];
         if (!def) return false;
-        const baseWindup = def.windupMs ?? 140;
-        const delay = Math.max(80, wolfApplyJitter(baseWindup, def.windupJitter ?? 0.1));
+        if (e.state === 'attack' || e.state === 'leap') return false;
         e.attackQueue = [name];
         e.comboIndex = 0;
-        e.nextComboAt = now + delay + 80;
         e.runInState = null;
-        startWolfReady(e, delay, { attackName: name });
-        return true;
+        e.pendingCombo = null;
+        const launched = startWolfAttack(e, name);
+        if (launched === 'defer') return false;
+        return !!launched;
       }
 
       function wolfQueueLeap(e, now = performance.now(), distance = Infinity) {
@@ -1904,13 +1904,14 @@
         if (distance < WOLF_CLOSE_BAND) return false;
         if (now < (e.leapCooldownUntil || 0)) return false;
         if (now < (e.leapGraceUntil || 0)) return false;
-        const delay = Math.max(100, wolfApplyJitter(def.windupMs ?? 140, def.windupJitter ?? 0.12));
+        if (e.state === 'attack' || e.state === 'leap') return false;
         e.attackQueue = ['leap'];
         e.comboIndex = 0;
-        e.nextComboAt = now + delay + 100;
         e.runInState = null;
-        startWolfReady(e, delay, { attackName: 'leap' });
-        return true;
+        e.pendingCombo = null;
+        const launched = startWolfAttack(e, 'leap');
+        if (launched === 'defer') return false;
+        return !!launched;
       }
 
       function wolfStartRunIn(e, dx, now = performance.now()) {
@@ -1928,26 +1929,12 @@
         };
         e.attackQueue = [];
         e.comboIndex = 0;
-        e.windupAttack = null;
+        e.pendingCombo = null;
         e.nextComboAt = now + duration;
         e.facing = dir;
         e.vx = dir * WOLF_RUN_IN_SPEED;
         e.vy = 0;
         if (e.anim !== 'run' && e.mgr.run) setEnemyAnim(e, 'run');
-      }
-
-      function startWolfReady(e, delayMs = 220, opts = {}) {
-        const now = performance.now();
-        e.state = 'ready';
-        e.readyUntil = now + delayMs;
-        e.vx = 0;
-        e.vy = 0;
-        if (opts.attackName) {
-          e.windupAttack = { name: opts.attackName, until: e.readyUntil };
-        } else if (!opts.preserveWindup) {
-          e.windupAttack = null;
-        }
-        if (e.mgr.ready) setEnemyAnim(e, 'ready');
       }
 
       function spawnWolfHitbox(e, def) {
@@ -1980,15 +1967,16 @@
             e.attackQueue = [];
             e.comboIndex = 0;
             e.currentAttack = null;
-            e.readyUntil = now;
             e.attackHitAt = 0;
             e.attackEndAt = 0;
             e.nextComboAt = Math.max(e.nextComboAt, now + 180);
+            e.pendingCombo = null;
             return 'defer';
           }
         }
         const attack = { name, def, start: now, spawned: false };
         e.currentAttack = attack;
+        e.pendingCombo = null;
         if (def.type === 'maneuver') {
           e.state = 'leap';
           const playerPos = playerSprite.sprite?.position;
@@ -2037,7 +2025,6 @@
           e.attackEndAt = attack.endAt;
           e.vx = def.forwardImpulse ? def.forwardImpulse * e.facing : 0;
         }
-        e.windupAttack = null;
         return true;
       }
 
@@ -2055,10 +2042,15 @@
           const nextName = e.attackQueue[e.comboIndex];
           const gapBase = attackDef ? (attackDef.comboGapMs ?? attackDef.landBufferMs ?? 150) : 150;
           const gap = Math.max(80, wolfApplyJitter(gapBase, attackDef?.comboGapJitter ?? 0.12));
-          startWolfReady(e, gap, { attackName: nextName });
+          const gapUntil = now + gap;
+          e.state = 'recover';
+          e.stateUntil = gapUntil;
+          e.pendingCombo = { name: nextName, at: gapUntil };
+          e.nextComboAt = Math.max(e.nextComboAt, gapUntil);
         } else {
           e.attackQueue = [];
           e.comboIndex = 0;
+          e.pendingCombo = null;
           e.state = 'recover';
           const recoveryBase = attackDef ? (attackDef.recoveryMs ?? attackDef.landBufferMs ?? 380) : 380;
           const cooldownBase = attackDef ? (attackDef.cooldownMs ?? 760) : 760;
@@ -2067,7 +2059,6 @@
           e.stateUntil = now + recovery;
           e.nextComboAt = now + cooldown;
           e.leapGraceUntil = now + WOLF_LEAP_POST_ATTACK_GRACE_MS;
-          e.windupAttack = null;
         }
       }
 
@@ -2264,19 +2255,18 @@
           hpMax: 38, hp: 38,
           state: 'patrol', playerSeen: false, packRole: 'support',
           attackQueue: [], comboIndex: 0, currentAttack: null,
-          attackHitAt: 0, attackEndAt: 0, readyUntil: 0, stateUntil: 0,
+          attackHitAt: 0, attackEndAt: 0, stateUntil: 0,
           nextComboAt: 0, leapState: null, hitReactUntil: 0,
           pendingLandingState: null,
           runInState: null,
           leapCooldownUntil: 0,
           leapGraceUntil: 0,
-          windupAttack: null,
+          pendingCombo: null,
           dying: false, deathAt: 0, fadeStartAt: 0, fadeDone: false,
           fadeDelayMs: ENEMY_FADE_DELAY_MS, fadeDurationMs: ENEMY_FADE_DURATION_MS,
           dead: false, combat: null, hurtbox: null
         };
         await loadEnemySheet(e, 'run', 'assets/sprites/Mobs/wolf/Run.png', 14, true, true);
-        await loadEnemySheet(e, 'ready', 'assets/sprites/Mobs/wolf/Ready.png', 12, true);
         await loadEnemySheet(e, 'bite', 'assets/sprites/Mobs/wolf/Bite.png', 12, false, true);
         await loadEnemySheet(e, 'claw', 'assets/sprites/Mobs/wolf/Claw.png', 12, false, true);
         await loadEnemySheet(e, 'hit', 'assets/sprites/Mobs/wolf/Hit.png', 12, false, true);
@@ -2318,9 +2308,9 @@
             e.attackQueue = [];
             e.comboIndex = 0;
             e.currentAttack = null;
-            e.readyUntil = 0;
             e.attackHitAt = 0;
             e.attackEndAt = 0;
+            e.pendingCombo = null;
             if (e.state === 'leap' && !e.onGround) {
               e.pendingLandingState = { type: 'hit', until: now + 240 };
               e.hitReactUntil = now + 240;
@@ -2345,9 +2335,9 @@
             e.attackQueue = [];
             e.comboIndex = 0;
             e.currentAttack = null;
-            e.readyUntil = 0;
             e.attackHitAt = 0;
             e.attackEndAt = 0;
+            e.pendingCombo = null;
             if (e.hurtbox) Combat.setHurtboxEnabled(e.hurtbox, false);
             Combat.removeActor(combatActor);
             e.combat = null;
@@ -2591,35 +2581,6 @@
             }
             break;
           }
-          case 'ready': {
-            e.vx = 0;
-            e.vy = 0;
-            e.facing = dx >= 0 ? 1 : -1;
-            if (!dying && !e.pendingLandingState && now >= e.readyUntil) {
-              const name = e.attackQueue[e.comboIndex];
-              if (!name) {
-                finishWolfAttack(e);
-              } else {
-                if (name === 'leap' && Math.abs(dx) < WOLF_CLOSE_BAND) {
-                  const fallback = wolfSelectMeleeAttack();
-                  wolfQueueMelee(e, fallback, now);
-                  break;
-                }
-                const launch = startWolfAttack(e, name);
-                if (launch === 'defer') {
-                  break;
-                }
-                if (!launch) {
-                  finishWolfAttack(e);
-                }
-              }
-            }
-            if (dying || e.pendingLandingState) {
-              e.attackQueue = [];
-              e.comboIndex = 0;
-            }
-            break;
-          }
           case 'attack': {
             e.facing = dx >= 0 ? 1 : -1;
             const attack = e.currentAttack;
@@ -2672,8 +2633,33 @@
           }
           case 'recover': {
             e.vx *= 0.85;
+            const pendingCombo = e.pendingCombo;
+            if (!dying && !e.pendingLandingState && pendingCombo && now >= pendingCombo.at) {
+              e.pendingCombo = null;
+              if (pendingCombo.name === 'leap' && Math.abs(dx) < WOLF_CLOSE_BAND) {
+                const fallback = wolfSelectMeleeAttack();
+                if (wolfQueueMelee(e, fallback, now)) {
+                  break;
+                }
+                e.state = 'stalk';
+                if (e.mgr.run) setEnemyAnim(e, 'run');
+                break;
+              }
+              const launch = startWolfAttack(e, pendingCombo.name);
+              if (launch && launch !== 'defer') {
+                break;
+              }
+              if (launch === 'defer') {
+                if (e.state === 'stalk' && e.mgr.run) setEnemyAnim(e, 'run');
+                break;
+              }
+              e.state = 'stalk';
+              if (e.mgr.run) setEnemyAnim(e, 'run');
+              break;
+            }
             if (!dying && now >= e.stateUntil) {
               e.state = 'stalk';
+              e.pendingCombo = null;
               if (e.mgr.run) setEnemyAnim(e, 'run');
             }
             break;
