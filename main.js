@@ -877,6 +877,7 @@
       rollInvulnEndAt: 0,
       rollInvulnDuration: 0,
       rollInvulnApplied: false,
+      rollFacing: null,
       acting: false, facing: 1, dead: false,
       flasking: false,
       flaskStart: 0,
@@ -3331,6 +3332,10 @@
 
     function terminateRollState({ resetVelocity = true } = {}) {
       const hadInvulnerability = state.rollInvulnApplied || state.iFramed;
+      if (typeof state.rollFacing === 'number') {
+        state.facing = state.rollFacing;
+      }
+      state.rollFacing = null;
       state.rolling = false;
       state.rollT = 0;
       state.iFramed = false;
@@ -3365,6 +3370,7 @@
       const endOffset = Math.max(rollDurationOffset, configuredEndOffset);
       const iStart = now + startOffset * 1000;
       const iEnd = now + endOffset * 1000;
+      state.rollFacing = state.facing >= 0 ? 1 : -1;
       state.rolling = true;
       state.rollT = 0;
       state.iFramed = false;
@@ -3661,7 +3667,7 @@
       // Inputs → intentions
       if (!state.acting && !state.dead) {
         const want = (Keys.left ? -1 : 0) + (Keys.right ? 1 : 0);
-        if (want !== 0) state.facing = want;
+        if (want !== 0 && !state.rolling) state.facing = want;
 
         if (state.climbing) {
           state.vx = 0;
@@ -3697,7 +3703,8 @@
       if (Keys.roll) { startRoll(); Keys.roll = false; }
       if (state.rolling) {
         state.rollT += dt;
-        state.vx = state.facing * stats.rollSpeed;
+        const rollFacing = (typeof state.rollFacing === 'number') ? state.rollFacing : (state.facing >= 0 ? 1 : -1);
+        state.vx = rollFacing * stats.rollSpeed;
         const inWindow = state.rollInvulnDuration > 0 && now >= state.rollInvulnStartAt && now < state.rollInvulnEndAt;
         if (inWindow && !state.rollInvulnApplied) {
           const remaining = Math.max(0, state.rollInvulnEndAt - now);
@@ -3810,9 +3817,10 @@
 
       // Drive sprite from placeholder
       if (playerSprite.sprite) {
+        const facingForSprite = state.rolling ? ((typeof state.rollFacing === 'number') ? state.rollFacing : (state.facing >= 0 ? 1 : -1)) : state.facing;
         playerSprite.sprite.position.x = placeholder.position.x;
         playerSprite.sprite.position.y = placeholder.position.y;
-        playerSprite.sprite.invertU = (state.facing < 0);
+        playerSprite.sprite.invertU = (facingForSprite < 0);
       }
       if (healFx.sprite) {
         const playerSp = playerSprite.sprite;
