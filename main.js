@@ -3329,6 +3329,25 @@
       playHealFlash();
     }
 
+    function terminateRollState({ resetVelocity = true } = {}) {
+      const hadInvulnerability = state.rollInvulnApplied || state.iFramed;
+      state.rolling = false;
+      state.rollT = 0;
+      state.iFramed = false;
+      state.rollStartAt = 0;
+      state.rollInvulnStartAt = 0;
+      state.rollInvulnEndAt = 0;
+      state.rollInvulnDuration = 0;
+      state.rollInvulnApplied = false;
+      if (resetVelocity) {
+        state.vx = 0;
+        state.vy = 0;
+      }
+      if (hadInvulnerability && playerActor) {
+        Combat.setInvulnerable(playerActor, 'roll', false);
+      }
+    }
+
     function startRoll() {
       if (state.dead || state.rolling) return;
       const flasking = state.flasking;
@@ -3487,6 +3506,7 @@
     // Hurt + Death
     function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
+      terminateRollState();
       if (opts.event && opts.event.applyDamage === false && !opts.force) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
@@ -3515,6 +3535,7 @@
     }
     function die() {
       if (state.dead) return;
+      terminateRollState();
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
@@ -3526,6 +3547,7 @@
     function startRespawn() {
       fadeEl.classList.add('show');
       setTimeout(() => {
+        terminateRollState();
         placeholder.position.x = respawn.x;
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true; state.climbing = false;
@@ -3690,20 +3712,10 @@
           state.iFramed = inWindow;
         }
         if (state.rollT >= stats.rollDur) {
-          state.rolling = false;
-          if (state.rollInvulnApplied || state.iFramed) {
-            state.rollInvulnApplied = false;
-            state.iFramed = false;
-            Combat.setInvulnerable(playerActor, 'roll', false);
-          }
-          state.rollInvulnStartAt = 0;
-          state.rollInvulnEndAt = 0;
-          state.rollInvulnDuration = 0;
+          terminateRollState({ resetVelocity: false });
         }
       } else if (state.rollInvulnApplied || state.iFramed) {
-        state.rollInvulnApplied = false;
-        state.iFramed = false;
-        Combat.setInvulnerable(playerActor, 'roll', false);
+        terminateRollState({ resetVelocity: false });
       }
 
       // Light/Heavy/Flask/Debug
