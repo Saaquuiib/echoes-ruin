@@ -2447,7 +2447,7 @@
           stoopProgress: 0,
           hoverReturnActive: false
         };
-        await loadEnemySheet(e, 'sleep', 'assets/sprites//Mobs/bat/Sleep.png', 1, true, true);
+        await loadEnemySheet(e, 'sleep', 'assets/sprites/Mobs/bat/Sleep.png', 1, true, true);
         await loadEnemySheet(e, 'wake', 'assets/sprites/Mobs/bat/WakeUp.png', 12, false, true);
         await loadEnemySheet(e, 'fly', 'assets/sprites/Mobs/bat/Flying.png', 12, true, true);
         await loadEnemySheet(e, 'attack', 'assets/sprites/Mobs/bat/Attack.png', 12, false, true);
