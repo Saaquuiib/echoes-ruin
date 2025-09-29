@@ -1025,12 +1025,12 @@
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
     const LAND_SMOKE_FX_META = { url: 'assets/sprites/VFX/Land smoke FX.png', frames: 12, fps: 16 };
-    const DOUBLE_JUMP_SMOKE_FX_META = { url: 'assets/sprites/VFX/Double jump smoke FX.png', frames: 8, fps: 16 };
+    const DOUBLE_JUMP_SMOKE_FX_META = { url: 'assets/sprites/VFX/Double jump smoke FX.png', frames: 11, fps: 16 };
     const ROLL_SMOKE_FX_META = { url: 'assets/sprites/VFX/Roll smoke FX.png', frames: 13, fps: 16.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
     const LAND_SMOKE_FX_SCALE = 0.4;
-    const DOUBLE_JUMP_SMOKE_FX_SCALE = LAND_SMOKE_FX_SCALE;
+    const DOUBLE_JUMP_SMOKE_FX_SCALE = 0.35;
     const ROLL_SMOKE_FX_SCALE = 0.3;
     const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
     const DOUBLE_JUMP_SMOKE_FRAME_MS = 1000 / DOUBLE_JUMP_SMOKE_FX_META.fps;
