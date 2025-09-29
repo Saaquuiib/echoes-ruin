@@ -1328,6 +1328,7 @@
       endAt: 0,
       cancelAt: 0,
       queued: false,
+      chainSwapQueued: false,
       pendingHit: false,
       hitAt: 0,
       hitMeta: null
@@ -3636,6 +3637,7 @@
       combo.lastChain = chain;
       combo.stage = stage;
       combo.queued = false;
+      combo.chainSwapQueued = false;
       combo.pendingHit = false;
       combo.hitMeta = null;
       combo.hitAt = 0;
@@ -3657,7 +3659,11 @@
 
     function tryStartLight() {
       if (state.dead || state.rolling) return;
-      if (combo.stage > 0) { combo.queued = true; return; }
+      if (combo.stage > 0) {
+        combo.queued = true;
+        combo.chainSwapQueued = true;
+        return;
+      }
       const chain = state.onGround ? 'light' : 'air';
       startComboStage(chain, 1);
     }
@@ -3682,6 +3688,7 @@
       combo.hitAt = 0;
       combo.chain = null;
       combo.nextChain = null;
+      combo.chainSwapQueued = false;
       combo.lastChain = null;
       combo.lastChainAt = 0;
       if (!keepActing) state.acting = false;
@@ -3697,7 +3704,7 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.flasking = false;
       state.acting = true;
-      combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
+      combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       const now = performance.now();
       heavy.charging = true;
       heavy.releasing = false;
@@ -3786,7 +3793,7 @@
       }
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
-      state.acting = true; combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false;
+      state.acting = true; combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false;
       combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('hurt', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
@@ -3797,7 +3804,7 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
-      combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
+      combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('death', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
@@ -3987,15 +3994,22 @@
         let advanced = false;
 
         const overrideChain = (combo.nextChain && combo.nextChain !== combo.chain) ? combo.nextChain : null;
-        if (overrideChain) {
+        const allowChainSwap = combo.chainSwapQueued;
+        if (overrideChain && allowChainSwap) {
           advanced = startComboStage(overrideChain, 1);
-          if (advanced) combo.nextChain = null;
+          if (advanced) {
+            combo.nextChain = null;
+            combo.chainSwapQueued = false;
+          }
         }
 
         if (!advanced) {
-          if (chainId !== desiredChain) {
+          if (chainId !== desiredChain && allowChainSwap) {
             advanced = startComboStage(desiredChain, 1);
-            if (advanced) combo.nextChain = null;
+            if (advanced) {
+              combo.nextChain = null;
+              combo.chainSwapQueued = false;
+            }
           } else if (combo.queued && currentMeta?.next) {
             const nextStage = combo.stage + 1;
             advanced = startComboStage(chainId, nextStage);
@@ -4005,7 +4019,11 @@
         if (!advanced) {
           combo.lastChain = chainId;
           combo.lastChainAt = now;
-          combo.nextChain = null; combo.chain = null; combo.stage = 0; combo.queued = false;
+          if (!allowChainSwap) combo.nextChain = null;
+          combo.chain = null;
+          combo.stage = 0;
+          combo.queued = false;
+          if (!allowChainSwap) combo.chainSwapQueued = false;
           combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
           state.acting = false;
         }
@@ -4071,13 +4089,19 @@
         const desired = combo.nextChain;
         const canStart = (desired === 'light' && state.onGround) || (desired === 'air' && !state.onGround);
         let started = false;
-        if (canStart) {
+        if (canStart && combo.chainSwapQueued) {
           started = startComboStage(desired, 1);
-          if (started) combo.nextChain = null;
+          if (started) {
+            combo.nextChain = null;
+            combo.chainSwapQueued = false;
+          }
         }
         if (!started) {
           const sinceLast = now - combo.lastChainAt;
-          if (sinceLast > COMBO_TRANSITION_GRACE_MS) combo.nextChain = null;
+          if (sinceLast > COMBO_TRANSITION_GRACE_MS) {
+            combo.nextChain = null;
+            combo.chainSwapQueued = false;
+          }
         }
       }
 
