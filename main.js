@@ -905,6 +905,9 @@
     };
     const state = {
       onGround: true, vy: 0, vx: 0, lastGrounded: performance.now(), jumpBufferedAt: -Infinity, lastJumpPressAt: -Infinity,
+      airJumpsRemaining: 1,
+      airFlipActive: false,
+      airFlipUntil: 0,
       rolling: false, rollT: 0, iFramed: false,
       rollStartAt: 0,
       rollInvulnStartAt: 0,
@@ -1022,12 +1025,15 @@
 
     const HEAL_FX_META = { url: 'assets/sprites/VFX/heal.png', frames: 6, fps: 6.6667 };
     const LAND_SMOKE_FX_META = { url: 'assets/sprites/VFX/Land smoke FX.png', frames: 12, fps: 16 };
+    const DOUBLE_JUMP_SMOKE_FX_META = { url: 'assets/sprites/VFX/Double jump smoke FX.png', frames: 8, fps: 16 };
     const ROLL_SMOKE_FX_META = { url: 'assets/sprites/VFX/Roll smoke FX.png', frames: 13, fps: 16.6667 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
     const LAND_SMOKE_FX_SCALE = 0.4;
+    const DOUBLE_JUMP_SMOKE_FX_SCALE = LAND_SMOKE_FX_SCALE;
     const ROLL_SMOKE_FX_SCALE = 0.3;
     const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
+    const DOUBLE_JUMP_SMOKE_FRAME_MS = 1000 / DOUBLE_JUMP_SMOKE_FX_META.fps;
     const ROLL_SMOKE_FRAME_MS = 1000 / ROLL_SMOKE_FX_META.fps;
     const healFlash = {
       sprite: null,
@@ -1049,6 +1055,7 @@
     const HIT_FX_POOL_SIZE = 20;
     const HURT_FX_POOL_SIZE = 16;
     const LAND_SMOKE_FX_POOL_SIZE = 12;
+    const DOUBLE_JUMP_SMOKE_FX_POOL_SIZE = 12;
     const ROLL_SMOKE_FX_POOL_SIZE = 12;
 
     function createFxPool({ name, meta, capacity, frameMs, zOffset }) {
@@ -1234,6 +1241,13 @@
       frameMs: LAND_SMOKE_FRAME_MS,
       zOffset: FX_LAYER_OFFSET
     });
+    const fxDoubleJumpSmoke = createFxPool({
+      name: 'fx_double_jump_smoke',
+      meta: DOUBLE_JUMP_SMOKE_FX_META,
+      capacity: DOUBLE_JUMP_SMOKE_FX_POOL_SIZE,
+      frameMs: DOUBLE_JUMP_SMOKE_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET
+    });
     const fxRollSmoke = createFxPool({
       name: 'fx_roll_smoke',
       meta: ROLL_SMOKE_FX_META,
@@ -1303,6 +1317,17 @@
       fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
 
+    function spawnDoubleJumpSmokeFx(now = performance.now()) {
+      const { basePos, baseZ, renderGroup } = getPlayerFxContext();
+      if (!basePos) return;
+      const facing = state.facing >= 0 ? 1 : -1;
+      const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * DOUBLE_JUMP_SMOKE_FX_SCALE);
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const spawnY = computeFxCenterYFromFoot(fxDoubleJumpSmoke, sizeUnits, footY - 0.1);
+      const spawnX = snapToPixel(basePos.x);
+      fxDoubleJumpSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+    }
+
     function spawnRollSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
@@ -1315,6 +1340,31 @@
       const frontOffset = Number.isFinite(fxOffsets.offsetRight) ? fxOffsets.offsetRight : sizeUnits * 0.5;
       const spawnX = snapToPixel(footX + (frontOffset * facing));
       fxRollSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+    }
+
+    function triggerDoubleJump(now = performance.now()) {
+      state.vy = stats.jumpVel;
+      state.onGround = false;
+      state.jumpBufferedAt = 0;
+      state.airJumpsRemaining = Math.max(0, (state.airJumpsRemaining || 0) - 1);
+      state.landing = false;
+      state.landingStartAt = 0;
+      state.landingUntil = 0;
+      state.landingTriggeredAt = 0;
+
+      spawnDoubleJumpSmokeFx(now);
+
+      const rollMeta = SHEETS.roll;
+      const rollMgr = playerSprite.mgr.roll;
+      if (rollMeta && rollMgr && playerSprite.sprite) {
+        const durationMs = (rollMeta.frames / rollMeta.fps) * 1000;
+        setAnim('roll', false);
+        state.airFlipActive = durationMs > 0;
+        state.airFlipUntil = state.airFlipActive ? now + durationMs : 0;
+      } else {
+        state.airFlipActive = false;
+        state.airFlipUntil = 0;
+      }
     }
 
     // Attack/Action timing
@@ -3775,6 +3825,8 @@
       if (opts.event && opts.event.applyDamage === false && !opts.force) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
+      state.airFlipActive = false;
+      state.airFlipUntil = 0;
       if (!opts.alreadyApplied) setHP(stats.hp - dmg);
       applyImpactEffects({ hitstopMs: HITSTOP_HURT_MS, shakeMagnitude: CAMERA_SHAKE_MAG * 1.05, shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 1.1 });
       const suppressFx = fadeEl?.classList?.contains('show');
@@ -3803,6 +3855,9 @@
       terminateRollState();
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
+      state.airFlipActive = false;
+      state.airFlipUntil = 0;
+      state.airJumpsRemaining = 1;
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
       combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('death', false);
@@ -3816,6 +3871,9 @@
         placeholder.position.x = respawn.x;
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true;
+        state.airJumpsRemaining = 1;
+        state.airFlipActive = false;
+        state.airFlipUntil = 0;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
         if (playerActor) {
           playerActor.alive = true;
@@ -3938,14 +3996,18 @@
 
         const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
         const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        if (buffered && (state.onGround || canCoyote) && !state.rolling) {
-          state.vy = stats.jumpVel;
-          state.onGround = false;
-          state.jumpBufferedAt = 0;
-          state.landing = false;
-          state.landingStartAt = 0;
-          state.landingUntil = 0;
-          state.landingTriggeredAt = 0;
+        if (buffered && !state.rolling) {
+          if (state.onGround || canCoyote) {
+            state.vy = stats.jumpVel;
+            state.onGround = false;
+            state.jumpBufferedAt = 0;
+            state.landing = false;
+            state.landingStartAt = 0;
+            state.landingUntil = 0;
+            state.landingTriggeredAt = 0;
+          } else if (!state.onGround && state.airJumpsRemaining > 0) {
+            triggerDoubleJump(now);
+          }
         }
       } else {
         // damp movement during actions
@@ -4064,6 +4126,9 @@
         placeholder.position.y = groundCenter;
         if (!state.onGround) state.lastGrounded = now;
         state.onGround = true;
+        state.airJumpsRemaining = 1;
+        state.airFlipActive = false;
+        state.airFlipUntil = 0;
         if (state.vy < 0) state.vy = 0;
         justLanded = !wasOnGround;
       } else {
@@ -4160,6 +4225,7 @@
       fxHit.update(now);
       fxHurt.update(now);
       fxLandSmoke.update(now);
+      fxDoubleJumpSmoke.update(now);
       fxRollSmoke.update(now);
       SpriteFlash.update(now);
 
@@ -4188,7 +4254,12 @@
         }
       }
 
-      const allowStateMachine = !state.rolling && !state.acting && !state.dead && playerSprite.sprite;
+      if (state.airFlipActive && now >= state.airFlipUntil) {
+        state.airFlipActive = false;
+        state.airFlipUntil = 0;
+      }
+
+      const allowStateMachine = !state.rolling && !state.acting && !state.dead && playerSprite.sprite && !state.airFlipActive;
       if (allowStateMachine) {
         let targetAnim = 'idle';
 
