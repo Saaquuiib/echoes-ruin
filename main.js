@@ -25,6 +25,7 @@
 
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
+  const HEAVY_FEINT_WINDOW_MS = 250;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
 
   // Ensure CSS (fallback if external fails)
@@ -3781,6 +3782,11 @@
       const holdMs = now - heavy.chargeStart;
       heavy.chargeHoldMs = holdMs;
       heavy.chargeRatio = Math.max(0, Math.min(1, holdMs / HEAVY_CHARGE_MAX_MS));
+      if (holdMs < HEAVY_FEINT_WINDOW_MS) {
+        resetHeavyState();
+        setAnim('idle', true);
+        return;
+      }
       if (!heavy.staminaSpent) {
         if (stats.stam < stats.heavyCost) {
           resetHeavyState();
