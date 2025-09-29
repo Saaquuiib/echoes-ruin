@@ -998,12 +998,17 @@
       kneelDown: { url: 'assets/sprites/player/KneelDown.png', frames: 5, fps: 12, loop: false },
       kneelUp:   { url: 'assets/sprites/player/KneelUp.png',   frames: 5, fps: 12, loop: false },
 
-      // Light combo
+      // Light combo (ground)
       light1: { url: 'assets/sprites/player/Light1.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'light2' },
       light2: { url: 'assets/sprites/player/Light2.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'light3' },
       light3: { url: 'assets/sprites/player/Light3.png', frames: 6,  fps: 16, loop: false, cancelFrac: 0.7, next: null },
 
-      // Air & heavy
+      // Air combo
+      air1: { url: 'assets/sprites/player/AirAttack1.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'air2' },
+      air2: { url: 'assets/sprites/player/AirAttack2.png', frames: 4,  fps: 16, loop: false, cancelFrac: 0.6, next: 'air3' },
+      air3: { url: 'assets/sprites/player/AirAttack3.png', frames: 6,  fps: 16, loop: false, cancelFrac: 0.7, next: null },
+
+      // Air movement & heavy
       jump:   { url: 'assets/sprites/player/Jump.png',   frames: 3,  fps: 16, loop: true },
       fall:   { url: 'assets/sprites/player/Fall.png',   frames: 3,  fps: 16, loop: true },
       landing: { url: 'assets/sprites/player/Landing.png', frames: 5,  fps: 16, loop: false },
@@ -1313,7 +1318,20 @@
     }
 
     // Attack/Action timing
-    const combo = { stage: 0, endAt: 0, cancelAt: 0, queued: false, pendingHit: false, hitAt: 0, hitMeta: null };
+    const COMBO_TRANSITION_GRACE_MS = 150;
+    const combo = {
+      chain: null,
+      nextChain: null,
+      lastChain: null,
+      lastChainAt: 0,
+      stage: 0,
+      endAt: 0,
+      cancelAt: 0,
+      queued: false,
+      pendingHit: false,
+      hitAt: 0,
+      hitMeta: null
+    };
     const heavy = {
       charging: false,
       releasing: false,
@@ -1358,6 +1376,42 @@
         shakeDurationMs: CAMERA_SHAKE_DURATION_MS
       },
       light3: {
+        shape: 'rect',
+        width: 1.25,
+        height: 1.25,
+        offset: { x: 1.0, y: 0 },
+        damage: () => stats.lightFinisherDamage ?? stats.lightDamage,
+        durationMs: 120,
+        hitFrac: 0.48,
+        hitstopMs: HITSTOP_LIGHT_MS + 10,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.85,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      air1: {
+        shape: 'rect',
+        width: 1.05,
+        height: 1.2,
+        offset: { x: 0.85, y: 0 },
+        damage: () => stats.lightDamage,
+        durationMs: 110,
+        hitFrac: 0.42,
+        hitstopMs: HITSTOP_LIGHT_MS,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.72,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      air2: {
+        shape: 'rect',
+        width: 1.1,
+        height: 1.2,
+        offset: { x: 0.9, y: 0 },
+        damage: () => stats.lightDamage,
+        durationMs: 110,
+        hitFrac: 0.42,
+        hitstopMs: HITSTOP_LIGHT_MS,
+        shakeMagnitude: CAMERA_SHAKE_MAG * 0.75,
+        shakeDurationMs: CAMERA_SHAKE_DURATION_MS
+      },
+      air3: {
         shape: 'rect',
         width: 1.25,
         height: 1.25,
@@ -1588,7 +1642,10 @@
 
     function onPlayerAttackLand(meta = {}) {
       if (!playerActor) return;
-      const inferredId = meta.attackId || (meta.stage ? `light${meta.stage}` : null) || meta.type || 'light1';
+      const stageId = meta.stage ?? combo.stage ?? 1;
+      const chainId = meta.chain || combo.chain || (state.onGround ? 'light' : 'air');
+      const fallbackId = getComboAnimKey(chainId, stageId) || `${chainId}${stageId}`;
+      const inferredId = meta.attackId || fallbackId || meta.type || 'light1';
       const attackDef = PLAYER_ATTACKS[inferredId] || PLAYER_ATTACKS.light1;
       if (!attackDef) return;
       const resolve = (value, fallbackMeta) => {
@@ -1838,7 +1895,12 @@
       const l2 = await createManagerAuto('light2'); if (l2.ok) playerSprite.mgr.light2 = l2.mgr;
       const l3 = await createManagerAuto('light3'); if (l3.ok) playerSprite.mgr.light3 = l3.mgr;
 
-      // Air & heavy
+      // Air combo
+      const a1 = await createManagerAuto('air1'); if (a1.ok) playerSprite.mgr.air1 = a1.mgr;
+      const a2 = await createManagerAuto('air2'); if (a2.ok) playerSprite.mgr.air2 = a2.mgr;
+      const a3 = await createManagerAuto('air3'); if (a3.ok) playerSprite.mgr.air3 = a3.mgr;
+
+      // Air movement & heavy
       const j  = await createManagerAuto('jump');    if (j.ok)  playerSprite.mgr.jump    = j.mgr;
       const f  = await createManagerAuto('fall');    if (f.ok)  playerSprite.mgr.fall    = f.mgr;
       const la = await createManagerAuto('landing'); if (la.ok) playerSprite.mgr.landing = la.mgr;
@@ -3545,35 +3607,59 @@
       spawnRollSmokeFx(now);
     }
 
-    // Light combo
-    function startLightStage(stage) {
+    // Combo handling (ground & air)
+    function getComboAnimKey(chain, stage) {
+      if (chain === 'light') {
+        return stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
+      }
+      if (chain === 'air') {
+        return stage === 1 ? 'air1' : stage === 2 ? 'air2' : 'air3';
+      }
+      return null;
+    }
+
+    function startComboStage(chain, stage) {
       if (state.dead) return false;
-      const name = stage === 1 ? 'light1' : stage === 2 ? 'light2' : 'light3';
-      const meta = SHEETS[name]; if (!meta || !playerSprite.mgr[name]) return false;
+      const onGround = state.onGround;
+      if (chain === 'light' && !onGround) return false;
+      if (chain === 'air' && onGround) return false;
+      const name = getComboAnimKey(chain, stage);
+      const meta = name ? SHEETS[name] : null;
+      if (!name || !meta || !playerSprite.mgr[name]) return false;
       if (stats.stam < stats.lightCost) return false;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       setST(stats.stam - stats.lightCost);
       state.flasking = false;
-      state.acting = true; combo.stage = stage; combo.queued = false;
-      combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
+      state.acting = true;
+      combo.chain = chain;
+      combo.nextChain = null;
+      combo.lastChain = chain;
+      combo.stage = stage;
+      combo.queued = false;
+      combo.pendingHit = false;
+      combo.hitMeta = null;
+      combo.hitAt = 0;
       setAnim(name, false);
       const now = performance.now();
       combo.endAt = now + playerSprite.animDurationMs;
       combo.cancelAt = now + playerSprite.animDurationMs * (meta.cancelFrac ?? 0.6);
+      combo.lastChainAt = now;
       const attackDef = PLAYER_ATTACKS[name];
       if (attackDef) {
         const animDur = playerSprite.animDurationMs || ((meta.frames / meta.fps) * 1000);
         const frac = attackDef.hitFrac ?? 0.45;
         combo.pendingHit = true;
         combo.hitAt = now + animDur * frac;
-        combo.hitMeta = { attackId: name, stage };
+        combo.hitMeta = { attackId: name, stage, chain };
       }
       return true;
     }
+
     function tryStartLight() {
       if (state.dead || state.rolling) return;
       if (combo.stage > 0) { combo.queued = true; return; }
-      startLightStage(1);
+      const chain = state.onGround ? 'light' : 'air';
+      startComboStage(chain, 1);
     }
 
     function resetHeavyState({ keepActing = false } = {}) {
@@ -3594,6 +3680,10 @@
       combo.pendingHit = false;
       combo.hitMeta = null;
       combo.hitAt = 0;
+      combo.chain = null;
+      combo.nextChain = null;
+      combo.lastChain = null;
+      combo.lastChainAt = 0;
       if (!keepActing) state.acting = false;
     }
 
@@ -3607,7 +3697,7 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       state.flasking = false;
       state.acting = true;
-      combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
+      combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       const now = performance.now();
       heavy.charging = true;
       heavy.releasing = false;
@@ -3696,7 +3786,7 @@
       }
       if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
-      state.acting = true; combo.stage = 0; combo.queued = false;
+      state.acting = true; combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false;
       combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('hurt', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
@@ -3707,7 +3797,7 @@
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
-      combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
+      combo.nextChain = null; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('death', false);
       actionEndAt = performance.now() + playerSprite.animDurationMs;
     }
@@ -3790,8 +3880,10 @@
         heavy.charged = heavy.chargeHoldMs >= HEAVY_CHARGE_MIN_MS;
       }
       if (combo.pendingHit && now >= combo.hitAt) {
-        const stageId = combo.stage || (combo.hitMeta?.stage) || 1;
-        const meta = combo.hitMeta || { attackId: `light${stageId}`, stage: stageId };
+        const stageId = combo.stage || combo.hitMeta?.stage || 1;
+        const chainId = combo.chain || combo.hitMeta?.chain || (state.onGround ? 'light' : 'air');
+        const attackId = combo.hitMeta?.attackId || getComboAnimKey(chainId, stageId) || `${chainId}${stageId}`;
+        const meta = combo.hitMeta || { attackId, stage: stageId, chain: chainId };
         combo.pendingHit = false;
         combo.hitAt = 0;
         combo.hitMeta = null;
@@ -3886,14 +3978,34 @@
       if (Keys.debugHurt) { triggerHurt(15); Keys.debugHurt = false; }
       if (Keys.debugDie)  { die(); Keys.debugDie = false; }
 
-      // Handle light combo progression
+      // Handle combo progression
       if (combo.stage > 0 && now >= combo.endAt) {
-        const cur = 'light' + combo.stage;
-        const next = SHEETS[cur].next;
-        if (combo.queued && next && startLightStage(combo.stage + 1)) {
-          // next stage started
-        } else {
-          combo.stage = 0; combo.queued = false;
+        const chainId = combo.chain || combo.lastChain || (state.onGround ? 'light' : 'air');
+        const currentKey = getComboAnimKey(chainId, combo.stage);
+        const currentMeta = currentKey ? SHEETS[currentKey] : null;
+        const desiredChain = state.onGround ? 'light' : 'air';
+        let advanced = false;
+
+        const overrideChain = (combo.nextChain && combo.nextChain !== combo.chain) ? combo.nextChain : null;
+        if (overrideChain) {
+          advanced = startComboStage(overrideChain, 1);
+          if (advanced) combo.nextChain = null;
+        }
+
+        if (!advanced) {
+          if (chainId !== desiredChain) {
+            advanced = startComboStage(desiredChain, 1);
+            if (advanced) combo.nextChain = null;
+          } else if (combo.queued && currentMeta?.next) {
+            const nextStage = combo.stage + 1;
+            advanced = startComboStage(chainId, nextStage);
+          }
+        }
+
+        if (!advanced) {
+          combo.lastChain = chainId;
+          combo.lastChainAt = now;
+          combo.nextChain = null; combo.chain = null; combo.stage = 0; combo.queued = false;
           combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
           state.acting = false;
         }
@@ -3938,6 +4050,35 @@
         justLanded = !wasOnGround;
       } else {
         state.onGround = false;
+      }
+
+      const justAirborne = !state.onGround && wasOnGround;
+
+      if (!state.dead && !state.rolling) {
+        if (combo.stage > 0) {
+          if (justLanded && combo.chain !== 'light') combo.nextChain = 'light';
+          else if (justAirborne && combo.chain !== 'air') combo.nextChain = 'air';
+        } else {
+          const timeSinceLast = now - combo.lastChainAt;
+          if (timeSinceLast <= COMBO_TRANSITION_GRACE_MS) {
+            if (justLanded && combo.lastChain === 'air') combo.nextChain = 'light';
+            else if (justAirborne && combo.lastChain === 'light') combo.nextChain = 'air';
+          }
+        }
+      }
+
+      if (!state.dead && !state.rolling && combo.stage === 0 && combo.nextChain) {
+        const desired = combo.nextChain;
+        const canStart = (desired === 'light' && state.onGround) || (desired === 'air' && !state.onGround);
+        let started = false;
+        if (canStart) {
+          started = startComboStage(desired, 1);
+          if (started) combo.nextChain = null;
+        }
+        if (!started) {
+          const sinceLast = now - combo.lastChainAt;
+          if (sinceLast > COMBO_TRANSITION_GRACE_MS) combo.nextChain = null;
+        }
       }
 
       if (justLanded) {
