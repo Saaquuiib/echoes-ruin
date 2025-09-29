@@ -1987,6 +1987,7 @@
       fxHit.init();
       fxHurt.init();
       fxLandSmoke.init();
+      fxDoubleJumpSmoke.init();
       fxRollSmoke.init();
       spawnShrine(-2, 0);
 
