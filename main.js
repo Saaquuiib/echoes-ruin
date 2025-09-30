@@ -9,6 +9,7 @@
   const FALLBACK_BASELINE_PX = 6;       // if pixel-read fails
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
+  const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
   const HERO_TORSO_FRAC = 0.28;         // relative height (feet->head) where torso FX center should sit
 
   const HITSTOP_LIGHT_MS = 60;
@@ -4193,8 +4194,10 @@
         spawnLandSmokeFx(now);
         const landingMeta = SHEETS.landing;
         const falling = vyBefore < -0.2;
+        const jumpBuffered = state.jumpBufferedAt && (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+        const jumpPressedRecently = state.lastJumpPressAt && (now - state.lastJumpPressAt) <= LANDING_SPAM_GRACE_MS;
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
-          !state.rolling && (!state.acting || state.flasking) && !state.dead;
+        !state.rolling && (!state.acting || state.flasking) && !state.dead && !jumpBuffered && !jumpPressedRecently;
         if (canTriggerLanding) {
           const dur = (landingMeta.frames / landingMeta.fps) * 1000;
           state.landing = true;
@@ -4253,9 +4256,12 @@
       // Animation state machine (skip while rolling/dead/other actions)
       let landingActive = false;
       if (state.landing) {
-        const landingInWindow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
-          now < state.landingUntil;
-        if (!landingInWindow) {
+        const jumpBufferedNow = state.jumpBufferedAt &&
+          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
+        const jumpPressedAfterLanding = state.lastJumpPressAt > state.landingTriggeredAt;
+        const eligibleNow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
+          now < state.landingUntil && !jumpBufferedNow && !jumpPressedAfterLanding;
+        if (!eligibleNow) {
           state.landing = false;
           state.landingStartAt = 0;
           state.landingUntil = 0;
