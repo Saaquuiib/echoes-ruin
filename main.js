@@ -9,7 +9,6 @@
   const FALLBACK_BASELINE_PX = 6;       // if pixel-read fails
   const ORTHO_VIEW_HEIGHT = 12;         // vertical world units in view
   const LANDING_MIN_GROUNDED_MS = 45;   // delay landing anim until on-ground persisted briefly
-  const LANDING_SPAM_GRACE_MS = 160;    // suppress landing anim if jump pressed again within this window
   const HERO_TORSO_FRAC = 0.28;         // relative height (feet->head) where torso FX center should sit
 
   const HITSTOP_LIGHT_MS = 60;
@@ -897,6 +896,7 @@
       jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
       rollDur: 0.35, rollSpeed: 6.0, iFrameStart: 0, iFrameEnd: 0.40, rollCost: 10,
+      jumpCost: 10,
       lightCost: 5, heavyCost: 18,
       lightDamage: 12,
       lightFinisherDamage: 16,
@@ -4011,8 +4011,11 @@
 
         const canCoyote = (now - state.lastGrounded) <= stats.coyoteTime * 1000;
         const buffered = (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        if (buffered && !state.rolling) {
-          if (state.onGround || canCoyote) {
+        const landingLocked = state.landing && now < state.landingUntil;
+        if (buffered && !state.rolling && !landingLocked) {
+          const canAffordJump = stats.stam >= stats.jumpCost;
+          if (canAffordJump && (state.onGround || canCoyote)) {
+            setST(stats.stam - stats.jumpCost);
             state.vy = stats.jumpVel;
             state.onGround = false;
             state.jumpBufferedAt = 0;
@@ -4020,7 +4023,8 @@
             state.landingStartAt = 0;
             state.landingUntil = 0;
             state.landingTriggeredAt = 0;
-          } else if (!state.onGround && state.airJumpsRemaining > 0) {
+          } else if (canAffordJump && !state.onGround && state.airJumpsRemaining > 0) {
+            setST(stats.stam - stats.jumpCost);
             triggerDoubleJump(now);
           }
         }
@@ -4189,13 +4193,8 @@
         spawnLandSmokeFx(now);
         const landingMeta = SHEETS.landing;
         const falling = vyBefore < -0.2;
-        const jumpBuffered = state.jumpBufferedAt &&
-          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        const jumpPressedRecently = state.lastJumpPressAt &&
-          (now - state.lastJumpPressAt) <= LANDING_SPAM_GRACE_MS;
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
-          !state.rolling && (!state.acting || state.flasking) && !state.dead &&
-          !jumpBuffered && !jumpPressedRecently;
+          !state.rolling && (!state.acting || state.flasking) && !state.dead;
         if (canTriggerLanding) {
           const dur = (landingMeta.frames / landingMeta.fps) * 1000;
           state.landing = true;
@@ -4254,12 +4253,9 @@
       // Animation state machine (skip while rolling/dead/other actions)
       let landingActive = false;
       if (state.landing) {
-        const jumpBufferedNow = state.jumpBufferedAt &&
-          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        const jumpPressedAfterLanding = state.lastJumpPressAt > state.landingTriggeredAt;
-        const eligibleNow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
-          now < state.landingUntil && !jumpBufferedNow && !jumpPressedAfterLanding;
-        if (!eligibleNow) {
+        const landingInWindow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
+          now < state.landingUntil;
+        if (!landingInWindow) {
           state.landing = false;
           state.landingStartAt = 0;
           state.landingUntil = 0;
