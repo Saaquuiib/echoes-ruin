@@ -131,7 +131,7 @@
 
   const SPRITE_FLASH_DURATION_MS = 100;
   const SPRITE_FLASH_RESET_MS = 16;
-  const SPRITE_FLASH_INTENSITY = 5;
+  const SPRITE_FLASH_INTENSITY = 20;
   const SpriteFlash = (() => {
     const states = new Map();
 
