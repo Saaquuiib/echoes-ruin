@@ -25,7 +25,7 @@
 
   const HEAVY_CHARGE_MIN_MS = 400;
   const HEAVY_CHARGE_MAX_MS = 800;
-  const HEAVY_FEINT_WINDOW_MS = 250;
+  const HEAVY_FEINT_WINDOW_MS = 150;
   const HEAVY_HIT_FRAC = 0.45;          // fraction of release anim when impact is considered
 
   // Ensure CSS (fallback if external fails)
