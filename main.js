@@ -18,7 +18,7 @@
   const HITSTOP_HURT_MS = 90;
 
   const CAMERA_SHAKE_DURATION_MS = 60;
-  const CAMERA_SHAKE_MAG = 0.12;        // world units for micro shake amplitude
+  const CAMERA_SHAKE_MAG = 0.15;        // world units for micro shake amplitude
 
   const ENEMY_FADE_DELAY_MS = 5000;
   const ENEMY_FADE_DURATION_MS = 1000;
