@@ -20,6 +20,15 @@
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.15;        // world units for micro shake amplitude
 
+  const SLAM_DESCENT_SPEED = -26;
+  const SLAM_AFTERIMAGE_INTERVAL_MS = 50;
+  const SLAM_AFTERIMAGE_FADE_MS = 180;
+  const SLAM_AFTERIMAGE_MAX = 8;
+  const SLAM_AFTERIMAGE_ALPHA = 0.4;
+  const SLAM_CAMERA_SHAKE_SCALE = 2.1;
+  const SLAM_HITBOX_DURATION_MS = 180;
+  const SLAM_HITBOX_RADIUS_FRAC = 0.55;
+
   const ENEMY_FADE_DELAY_MS = 5000;
   const ENEMY_FADE_DURATION_MS = 1000;
 
@@ -837,6 +846,7 @@
       left: false, right: false, jump: false, roll: false,
       light: false, heavy: false, flask: false, interact: false,
       runHold: false,
+      slam: false,
       debugHurt: false, debugDie: false
     };
 
@@ -846,6 +856,7 @@
       'Space': 'jump', 'KeyL': 'roll',
       'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
       'KeyE': 'interact',
+      'KeyS': 'slam', 'ArrowDown': 'slam',
       'F6': 'camShake', 'F7': 'slowMo', 'F8': 'colliders', 'F9': 'overlay', 'F10': 'enemyDbg',
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
@@ -856,6 +867,7 @@
       'Space': 'jump', 'KeyL': 'roll',
       'KeyJ': 'light', 'KeyK': 'heavy', 'KeyF': 'flask',
       'KeyE': 'interact',
+      'KeyS': 'slam', 'ArrowDown': 'slam',
       'ShiftLeft': 'runHold', 'ShiftRight': 'runHold',
       'KeyH': 'debugHurt', 'KeyX': 'debugDie'
     };
@@ -995,6 +1007,8 @@
     setHP(stats.hp); setST(stats.stam); setFlasks(stats.flaskCount);
 
     // === Sprite sheets ===
+    const PLAYER_SPRITE_MANAGER_CAPACITY = 8;
+
     const SHEETS = {
       idle:   { url: 'assets/sprites/player/Idle.png',   frames: 10, fps: 10, loop: true },
       walk:   { url: 'assets/sprites/player/Walk.png',   frames: 8,  fps: 12, loop: true },
@@ -1030,14 +1044,20 @@
     const LAND_SMOKE_FX_META = { url: 'assets/sprites/VFX/Land smoke FX.png', frames: 12, fps: 16 };
     const DOUBLE_JUMP_SMOKE_FX_META = { url: 'assets/sprites/VFX/Double jump smoke FX.png', frames: 11, fps: 16 };
     const ROLL_SMOKE_FX_META = { url: 'assets/sprites/VFX/Roll smoke FX.png', frames: 13, fps: 16.6667 };
+    const GROUND_SLAM_FX_META = { url: 'assets/sprites/VFX/Ground slam FX.png', frames: 13, fps: 20 };
+    const SLAM_DEBRIS_FX_META = { url: 'assets/sprites/VFX/Debris FX.png', frames: 9, fps: 20 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
     const LAND_SMOKE_FX_SCALE = 0.4;
     const DOUBLE_JUMP_SMOKE_FX_SCALE = 0.35;
     const ROLL_SMOKE_FX_SCALE = 0.3;
+    const GROUND_SLAM_FX_SCALE = LAND_SMOKE_FX_SCALE;
+    const SLAM_DEBRIS_FX_SCALE = LAND_SMOKE_FX_SCALE * 1.18;
     const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
     const DOUBLE_JUMP_SMOKE_FRAME_MS = 1000 / DOUBLE_JUMP_SMOKE_FX_META.fps;
     const ROLL_SMOKE_FRAME_MS = 1000 / ROLL_SMOKE_FX_META.fps;
+    const GROUND_SLAM_FRAME_MS = 1000 / GROUND_SLAM_FX_META.fps;
+    const SLAM_DEBRIS_FRAME_MS = 1000 / SLAM_DEBRIS_FX_META.fps;
     const healFlash = {
       sprite: null,
       manager: null,
@@ -1060,6 +1080,8 @@
     const LAND_SMOKE_FX_POOL_SIZE = 12;
     const DOUBLE_JUMP_SMOKE_FX_POOL_SIZE = 12;
     const ROLL_SMOKE_FX_POOL_SIZE = 12;
+    const GROUND_SLAM_FX_POOL_SIZE = 12;
+    const SLAM_DEBRIS_FX_POOL_SIZE = 12;
 
     function createFxPool({ name, meta, capacity, frameMs, zOffset }) {
       const pool = {
@@ -1258,6 +1280,20 @@
       frameMs: ROLL_SMOKE_FRAME_MS,
       zOffset: FX_LAYER_OFFSET
     });
+    const fxGroundSlam = createFxPool({
+      name: 'fx_ground_slam',
+      meta: GROUND_SLAM_FX_META,
+      capacity: GROUND_SLAM_FX_POOL_SIZE,
+      frameMs: GROUND_SLAM_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET
+    });
+    const fxSlamDebris = createFxPool({
+      name: 'fx_slam_debris',
+      meta: SLAM_DEBRIS_FX_META,
+      capacity: SLAM_DEBRIS_FX_POOL_SIZE,
+      frameMs: SLAM_DEBRIS_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET
+    });
 
     function getPlayerFxContext() {
       const baseSprite = playerSprite.sprite;
@@ -1345,7 +1381,23 @@
       fxRollSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
 
+    function spawnGroundSlamImpactFx(now = performance.now()) {
+      const { basePos, baseZ, renderGroup } = getPlayerFxContext();
+      if (!basePos) return;
+      const facing = state.facing >= 0 ? 1 : -1;
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const slamSize = Math.max(0.01, playerSprite.sizeUnits * GROUND_SLAM_FX_SCALE);
+      const slamY = computeFxCenterYFromFoot(fxGroundSlam, slamSize, footY - 0.1);
+      const spawnX = snapToPixel(basePos.x);
+      fxGroundSlam.spawn(spawnX, slamY, slamSize, facing, baseZ, renderGroup, now);
+
+      const debrisSize = Math.max(0.01, playerSprite.sizeUnits * SLAM_DEBRIS_FX_SCALE);
+      const debrisY = computeFxCenterYFromFoot(fxSlamDebris, debrisSize, footY - 0.1);
+      fxSlamDebris.spawn(spawnX, debrisY, debrisSize, facing, baseZ, renderGroup, now);
+    }
+
     function triggerDoubleJump(now = performance.now()) {
+      if (slam.active) return;
       state.vy = stats.jumpVel;
       state.onGround = false;
       state.jumpBufferedAt = 0;
@@ -1374,6 +1426,156 @@
         state.airFlipActive = false;
         state.airFlipUntil = 0;
       }
+    }
+
+    function spawnSlamAfterimage(now = performance.now()) {
+      const baseSprite = playerSprite.sprite;
+      if (!baseSprite) return;
+      const manager = baseSprite._manager || baseSprite.manager;
+      if (!manager) return;
+      const sprite = new BABYLON.Sprite(`slam_afterimage_${Math.round(now)}_${slam.afterimages.length}`, manager);
+      sprite.isPickable = false;
+      sprite.size = baseSprite.size;
+      sprite.position = baseSprite.position.clone();
+      sprite.invertU = baseSprite.invertU;
+      sprite.cellIndex = baseSprite.cellIndex;
+      sprite.stopAnimation();
+      if (typeof baseSprite.renderingGroupId === 'number') {
+        sprite.renderingGroupId = baseSprite.renderingGroupId;
+      }
+      if (sprite.position && baseSprite.position) {
+        const baseZ = typeof baseSprite.position.z === 'number' ? baseSprite.position.z : 0;
+        sprite.position.z = baseZ;
+      }
+      sprite.color = new BABYLON.Color4(1, 1, 1, SLAM_AFTERIMAGE_ALPHA);
+      slam.afterimages.push({ sprite, start: now, duration: SLAM_AFTERIMAGE_FADE_MS, baseAlpha: SLAM_AFTERIMAGE_ALPHA });
+      if (slam.afterimages.length > SLAM_AFTERIMAGE_MAX) {
+        const removed = slam.afterimages.shift();
+        if (removed?.sprite && typeof removed.sprite.dispose === 'function') removed.sprite.dispose();
+      }
+    }
+
+    function updateSlamAfterimages(now = performance.now()) {
+      let i = 0;
+      while (i < slam.afterimages.length) {
+        const entry = slam.afterimages[i];
+        const sprite = entry?.sprite;
+        const disposed = sprite && typeof sprite.isDisposed === 'function' ? sprite.isDisposed() : false;
+        if (!sprite || disposed) {
+          if (sprite && typeof sprite.dispose === 'function') sprite.dispose();
+          slam.afterimages.splice(i, 1);
+          continue;
+        }
+        const elapsed = now - entry.start;
+        if (elapsed >= entry.duration) {
+          sprite.dispose();
+          slam.afterimages.splice(i, 1);
+          continue;
+        }
+        const t = Math.max(0, Math.min(1, elapsed / entry.duration));
+        const alpha = entry.baseAlpha * (1 - t);
+        sprite.color = new BABYLON.Color4(1, 1, 1, alpha);
+        i++;
+      }
+    }
+
+    function disposeSlamAfterimages() {
+      while (slam.afterimages.length > 0) {
+        const entry = slam.afterimages.pop();
+        if (entry?.sprite && typeof entry.sprite.dispose === 'function') {
+          entry.sprite.dispose();
+        }
+      }
+    }
+
+    function cancelSlam() {
+      if (!slam.active) return;
+      slam.active = false;
+      slam.phase = null;
+      slam.startedAt = 0;
+      slam.lastAfterimageAt = 0;
+      slam.lastImpactAt = 0;
+    }
+
+    function tryStartSlam(now = performance.now()) {
+      if (slam.active || state.dead || state.rolling || state.onGround || state.flasking) return false;
+      if (state.acting || heavy.charging || heavy.releasing) return false;
+      if (!playerSprite.sprite) return false;
+      if (combo.stage > 0) return false;
+      slam.active = true;
+      slam.phase = 'descent';
+      slam.startedAt = now;
+      slam.lastAfterimageAt = now;
+      slam.lastImpactAt = 0;
+      state.acting = true;
+      state.onGround = false;
+      state.vx = 0;
+      state.vy = SLAM_DESCENT_SPEED;
+      state.jumpBufferedAt = 0;
+      state.airFlipActive = false;
+      state.airFlipUntil = 0;
+      state.landing = false;
+      state.landingStartAt = 0;
+      state.landingUntil = 0;
+      state.landingTriggeredAt = 0;
+      combo.chain = null;
+      combo.nextChain = null;
+      combo.chainSwapQueued = false;
+      combo.stage = 0;
+      combo.queued = false;
+      combo.pendingHit = false;
+      combo.hitMeta = null;
+      combo.hitAt = 0;
+      combo.lastChain = null;
+      combo.lastChainAt = now;
+      spawnSlamAfterimage(now);
+      if (playerSprite.state !== 'fall' && playerSprite.mgr.fall) {
+        setAnim('fall', true);
+      }
+      return true;
+    }
+
+    function updateSlamDescent(now = performance.now()) {
+      if (!slam.active || slam.phase !== 'descent') return;
+      state.vx = 0;
+      state.vy = SLAM_DESCENT_SPEED;
+      if (now - slam.lastAfterimageAt >= SLAM_AFTERIMAGE_INTERVAL_MS) {
+        slam.lastAfterimageAt = now;
+        spawnSlamAfterimage(now);
+      }
+    }
+
+    function spawnSlamHitbox() {
+      if (!playerActor) return;
+      const sizeUnits = playerSprite.sizeUnits || 1;
+      const radius = Math.max(0.6, sizeUnits * SLAM_HITBOX_RADIUS_FRAC);
+      const offsetY = -feetCenterY() + radius * 0.5;
+      Combat.spawnHitbox(playerActor, {
+        shape: 'circle',
+        radius,
+        durationMs: SLAM_HITBOX_DURATION_MS,
+        damage: stats.heavyDamage,
+        offset: { x: 0, y: offsetY },
+        meta: { type: 'slam', attackId: 'slam' }
+      });
+    }
+
+    function triggerSlamImpact(now = performance.now()) {
+      if (!slam.active || slam.phase !== 'descent') return;
+      slam.phase = null;
+      slam.active = false;
+      slam.startedAt = 0;
+      slam.lastAfterimageAt = 0;
+      slam.lastImpactAt = now;
+      state.acting = false;
+      state.vy = 0;
+      state.jumpBufferedAt = 0;
+      spawnGroundSlamImpactFx(now);
+      triggerCameraShake({
+        magnitude: CAMERA_SHAKE_MAG * SLAM_CAMERA_SHAKE_SCALE,
+        durationMs: CAMERA_SHAKE_DURATION_MS * SLAM_CAMERA_SHAKE_SCALE
+      });
+      spawnSlamHitbox();
     }
 
     // Attack/Action timing
@@ -1409,6 +1611,14 @@
       releaseDamage: 0,
       lastHoldMs: 0,
       lastDamage: 0
+    };
+    const slam = {
+      active: false,
+      phase: null,
+      startedAt: 0,
+      lastAfterimageAt: 0,
+      afterimages: [],
+      lastImpactAt: 0
     };
     const PLAYER_ATTACKS = {
       light1: {
@@ -1553,7 +1763,7 @@
         console.log(`[SpriteBaseline] detected baselinePx=${baselinePx} → baselineUnits=${playerSprite.baselineUnits.toFixed(3)}`);
       }
 
-      const mgr = new BABYLON.SpriteManager('mgr_' + metaKey, meta.url, 2, { width: frameW, height: frameH }, scene);
+      const mgr = new BABYLON.SpriteManager('mgr_' + metaKey, meta.url, PLAYER_SPRITE_MANAGER_CAPACITY, { width: frameW, height: frameH }, scene);
       mgr.texture.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
       mgr.texture.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE; // avoid UV wrapping on odd sheets
       mgr.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
@@ -1999,6 +2209,8 @@
       fxLandSmoke.init();
       fxDoubleJumpSmoke.init();
       fxRollSmoke.init();
+      fxGroundSlam.init();
+      fxSlamDebris.init();
       spawnShrine(-2, 0);
 
       // === Enemies ===
@@ -3598,7 +3810,7 @@
 
       // === Actions ===
     function tryFlask() {
-      if (state.dead || stats.flaskCount <= 0 || state.rolling) return;
+      if (state.dead || stats.flaskCount <= 0 || state.rolling || slam.active) return;
       if (state.acting && !state.flasking) return;
       if (state.flasking) return;
       setFlasks(stats.flaskCount - 1);
@@ -3638,7 +3850,7 @@
     }
 
     function startRoll() {
-      if (state.dead || state.rolling) return;
+      if (state.dead || state.rolling || slam.active) return;
       if (!state.onGround) return;
       const flasking = state.flasking;
       if (state.acting && !flasking) return;
@@ -3719,7 +3931,7 @@
     }
 
     function tryStartLight() {
-      if (state.dead || state.rolling) return;
+      if (state.dead || state.rolling || slam.active) return;
       if (combo.stage > 0) {
         combo.queued = true;
         combo.chainSwapQueued = true;
@@ -3757,7 +3969,7 @@
 
     function startHeavyCharge() {
       if (heavy.charging || heavy.releasing) return;
-      if (state.dead || state.rolling) return;
+      if (state.dead || state.rolling || slam.active) return;
       if (!state.onGround) return;
       if (state.acting && !state.flasking) return;
       if (!playerSprite.mgr.heavy) return;
@@ -3838,6 +4050,7 @@
     function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
       terminateRollState();
+      cancelSlam();
       if (opts.event && opts.event.applyDamage === false && !opts.force) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
@@ -3869,6 +4082,8 @@
     function die() {
       if (state.dead) return;
       terminateRollState();
+      cancelSlam();
+      disposeSlamAfterimages();
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.airFlipActive = false;
@@ -3884,6 +4099,8 @@
       fadeEl.classList.add('show');
       setTimeout(() => {
         terminateRollState();
+        cancelSlam();
+        disposeSlamAfterimages();
         placeholder.position.x = respawn.x;
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true;
@@ -3942,7 +4159,7 @@
         `Heavy:charging:${heavy.charging} releasing:${heavy.releasing} hold:${heavyHoldSec.toFixed(2)}s ratio:${heavy.chargeRatio.toFixed(2)} charged:${heavyChargedDisplay} dmg:${heavyDmg.toFixed(0)}\n` +
         `Hitstop:${hitstopMs.toFixed(0)}ms  CamShake:${cameraShake.enabled} (active:${cameraShake.active})\n` +
         (enemyDbg ? enemies.map((e,i)=>`E${i}:${e.type} st:${e.state||e.anim} x:${e.x.toFixed(2)} y:${e.y.toFixed(2)}`).join('\n') + '\n' : '') +
-        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, Space jump, L roll, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
+        `[F6] camShake:${cameraShake.enabled}  |  [F7] slowMo:${slowMo}  |  [F8] colliders:${showColliders}  |  [F9] overlay  |  [F10] enemyDbg  |  A/D move, Space jump, S slam, L roll, J light, K heavy, F flask, E interact, Shift run  |  Debug: H hurt X die`;
     }
 
     // === Game loop ===
@@ -4000,6 +4217,7 @@
       if (shrineTarget && Keys.interact) { activateShrine(shrineTarget); Keys.interact = false; }
 
       // Inputs → intentions
+      if (Keys.slam) { tryStartSlam(now); Keys.slam = false; }
       if (!state.acting && !state.dead) {
         const want = (Keys.left ? -1 : 0) + (Keys.right ? 1 : 0);
         if (want !== 0 && !state.rolling) state.facing = want;
@@ -4130,11 +4348,18 @@
       }
 
       // Physics (drive placeholder)
+      updateSlamDescent(now);
       const wasOnGround = state.onGround;
+      const slamming = slam.active && slam.phase === 'descent';
+      if (slamming) {
+        state.onGround = false;
+      }
       let vyBefore = state.vy;
       if (!state.dead) {
-        state.vy += stats.gravity * dt;
-        vyBefore = state.vy;
+        if (!slamming) {
+          state.vy += stats.gravity * dt;
+          vyBefore = state.vy;
+        }
         placeholder.position.x += state.vx * dt;
         placeholder.position.y += state.vy * dt;
       }
@@ -4150,6 +4375,9 @@
         state.airFlipActive = false;
         state.airFlipUntil = 0;
         if (state.vy < 0) state.vy = 0;
+        if (slamming) {
+          triggerSlamImpact(now);
+        }
         justLanded = !wasOnGround;
       } else {
         state.onGround = false;
@@ -4244,7 +4472,10 @@
       fxLandSmoke.update(now);
       fxDoubleJumpSmoke.update(now);
       fxRollSmoke.update(now);
+      fxGroundSlam.update(now);
+      fxSlamDebris.update(now);
       SpriteFlash.update(now);
+      updateSlamAfterimages(now);
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
