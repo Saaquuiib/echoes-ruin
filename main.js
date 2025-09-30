@@ -999,6 +999,7 @@
       walk:   { url: 'assets/sprites/player/Walk.png',   frames: 8,  fps: 12, loop: true },
       run:    { url: 'assets/sprites/player/Run.png',    frames: 8,  fps: 14, loop: true },
       roll:   { url: 'assets/sprites/player/Roll.png',   frames: 5,  fps: 18, loop: true },
+      doubleJump: { url: 'assets/sprites/player/Double Jump.png', frames: 3, fps: 12, loop: false },
       kneelDown: { url: 'assets/sprites/player/KneelDown.png', frames: 5, fps: 12, loop: false },
       kneelUp:   { url: 'assets/sprites/player/KneelUp.png',   frames: 5, fps: 12, loop: false },
 
@@ -1355,9 +1356,15 @@
 
       spawnDoubleJumpSmokeFx(now);
 
-      const rollMeta = SHEETS.roll;
-      const rollMgr = playerSprite.mgr.roll;
-      if (rollMeta && rollMgr && playerSprite.sprite) {
+      const doubleJumpMeta = SHEETS.doubleJump;
+      const doubleJumpMgr = playerSprite.mgr.doubleJump;
+      if (doubleJumpMeta && doubleJumpMgr && playerSprite.sprite) {
+        const durationMs = (doubleJumpMeta.frames / doubleJumpMeta.fps) * 1000;
+        setAnim('doubleJump', false);
+        state.airFlipActive = durationMs > 0;
+        state.airFlipUntil = state.airFlipActive ? now + durationMs : 0;
+      } else if (SHEETS.roll && playerSprite.mgr.roll && playerSprite.sprite) {
+        const rollMeta = SHEETS.roll;
         const durationMs = (rollMeta.frames / rollMeta.fps) * 1000;
         setAnim('roll', false);
         state.airFlipActive = durationMs > 0;
@@ -1939,6 +1946,7 @@
       const walkMgr = await createManagerAuto('walk');   if (walkMgr.ok)  playerSprite.mgr.walk  = walkMgr.mgr;
       const runMgr  = await createManagerAuto('run');    if (runMgr.ok)   playerSprite.mgr.run   = runMgr.mgr;
       const rollMgr = await createManagerAuto('roll');   if (rollMgr.ok)  playerSprite.mgr.roll  = rollMgr.mgr;
+      const doubleJumpMgr = await createManagerAuto('doubleJump'); if (doubleJumpMgr.ok) playerSprite.mgr.doubleJump = doubleJumpMgr.mgr;
       const kneelDMgr = await createManagerAuto('kneelDown'); if (kneelDMgr.ok) playerSprite.mgr.kneelDown = kneelDMgr.mgr;
       const kneelUMgr = await createManagerAuto('kneelUp');   if (kneelUMgr.ok) playerSprite.mgr.kneelUp = kneelUMgr.mgr;
 
