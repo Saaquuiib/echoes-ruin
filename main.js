@@ -1384,19 +1384,13 @@
       return snapToPixel(basePosX + worldOffset);
     }
     
-    function spawnLandSmokeFx(now = performance.now(), opts = {}) {
+    function spawnLandSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
       const facing = state.facing >= 0 ? 1 : -1;
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE);
-      const anchor = opts.anchor || 'foot';
-      let spawnY;
-      if (anchor === 'waist') {
-        spawnY = snapToPixel(torsoCenterY());
-      } else {
-        const footY = snapToPixel(basePos.y - feetCenterY());
-        spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY - 0.1);
-      }
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY - 0.1);
       const spawnX = snapToPixel(basePos.x);
       fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
@@ -4241,7 +4235,7 @@
           if (!seq.frame12Shake && frame >= 11) {
             triggerDeathShake();
             if (!seq.frame12LandFx) {
-              spawnLandSmokeFx(now, { anchor: 'waist' });
+              spawnLandSmokeFx(now);
               seq.frame12LandFx = true;
             }
             seq.frame12Shake = true;
