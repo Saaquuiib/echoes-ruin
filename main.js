@@ -21,14 +21,15 @@
   const CAMERA_SHAKE_MAG = 0.15;        // world units for micro shake amplitude
 
   const SLAM_DESCENT_SPEED = -26;
-  const SLAM_AFTERIMAGE_INTERVAL_MS = 50;
-  const SLAM_AFTERIMAGE_FADE_MS = 180;
-  const SLAM_AFTERIMAGE_MAX = 8;
-  const SLAM_AFTERIMAGE_ALPHA = 0.4;
   const SLAM_CAMERA_SHAKE_SCALE = 2.2;
   const SLAM_HITBOX_DURATION_MS = 180;
   const SLAM_HITBOX_RADIUS_FRAC = 0.55;
 
+  const AFTERIMAGE_INTERVAL_MS = 50;
+  const AFTERIMAGE_FADE_MS = 180;
+  const AFTERIMAGE_MAX = 8;
+  const AFTERIMAGE_ALPHA = 0.4;
+  
   const ENEMY_FADE_DELAY_MS = 5000;
   const ENEMY_FADE_DURATION_MS = 1000;
 
@@ -1428,12 +1429,12 @@
       }
     }
 
-    function spawnSlamAfterimage(now = performance.now()) {
+    function spawnAfterimage(now = performance.now()) {
       const baseSprite = playerSprite.sprite;
       if (!baseSprite) return;
       const manager = baseSprite._manager || baseSprite.manager;
       if (!manager) return;
-      const sprite = new BABYLON.Sprite(`slam_afterimage_${Math.round(now)}_${slam.afterimages.length}`, manager);
+      const sprite = new BABYLON.Sprite(`afterimage_${Math.round(now)}_${slam.afterimages.length}`, manager);
       sprite.isPickable = false;
       sprite.size = baseSprite.size;
       sprite.position = baseSprite.position.clone();
@@ -1447,15 +1448,15 @@
         const baseZ = typeof baseSprite.position.z === 'number' ? baseSprite.position.z : 0;
         sprite.position.z = baseZ;
       }
-      sprite.color = new BABYLON.Color4(1, 1, 1, SLAM_AFTERIMAGE_ALPHA);
-      slam.afterimages.push({ sprite, start: now, duration: SLAM_AFTERIMAGE_FADE_MS, baseAlpha: SLAM_AFTERIMAGE_ALPHA });
-      if (slam.afterimages.length > SLAM_AFTERIMAGE_MAX) {
+      sprite.color = new BABYLON.Color4(1, 1, 1, AFTERIMAGE_ALPHA);
+      slam.afterimages.push({ sprite, start: now, duration: AFTERIMAGE_FADE_MS, baseAlpha: AFTERIMAGE_ALPHA });
+      if (slam.afterimages.length > AFTERIMAGE_MAX) {
         const removed = slam.afterimages.shift();
         if (removed?.sprite && typeof removed.sprite.dispose === 'function') removed.sprite.dispose();
       }
     }
 
-    function updateSlamAfterimages(now = performance.now()) {
+    function updateAfterimages(now = performance.now()) {
       let i = 0;
       while (i < slam.afterimages.length) {
         const entry = slam.afterimages[i];
@@ -1479,7 +1480,7 @@
       }
     }
 
-    function disposeSlamAfterimages() {
+    function disposeAfterimages() {
       while (slam.afterimages.length > 0) {
         const entry = slam.afterimages.pop();
         if (entry?.sprite && typeof entry.sprite.dispose === 'function') {
@@ -1528,7 +1529,7 @@
       combo.hitAt = 0;
       combo.lastChain = null;
       combo.lastChainAt = now;
-      spawnSlamAfterimage(now);
+      spawnAfterimage(now);
       if (playerSprite.state !== 'fall' && playerSprite.mgr.fall) {
         setAnim('fall', true);
       }
@@ -1539,9 +1540,9 @@
       if (!slam.active || slam.phase !== 'descent') return;
       state.vx = 0;
       state.vy = SLAM_DESCENT_SPEED;
-      if (now - slam.lastAfterimageAt >= SLAM_AFTERIMAGE_INTERVAL_MS) {
+      if (now - slam.lastAfterimageAt >= AFTERIMAGE_INTERVAL_MS) {
         slam.lastAfterimageAt = now;
-        spawnSlamAfterimage(now);
+        spawnAfterimage(now);
       }
     }
 
@@ -4083,7 +4084,7 @@
       if (state.dead) return;
       terminateRollState();
       cancelSlam();
-      disposeSlamAfterimages();
+      disposeAfterimages();
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.airFlipActive = false;
@@ -4100,7 +4101,7 @@
       setTimeout(() => {
         terminateRollState();
         cancelSlam();
-        disposeSlamAfterimages();
+        disposeAfterimages();
         placeholder.position.x = respawn.x;
         placeholder.position.y = respawn.y;
         state.vx = 0; state.vy = 0; state.onGround = true;
@@ -4475,7 +4476,7 @@
       fxGroundSlam.update(now);
       fxSlamDebris.update(now);
       SpriteFlash.update(now);
-      updateSlamAfterimages(now);
+      updateAfterimages(now);
 
       // Shadow follows X; tiny shrink when airborne
       shadow.position.x = placeholder.position.x;
