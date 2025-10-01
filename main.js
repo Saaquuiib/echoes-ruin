@@ -19,6 +19,19 @@
 
   const CAMERA_SHAKE_DURATION_MS = 60;
   const CAMERA_SHAKE_MAG = 0.15;        // world units for micro shake amplitude
+  const HURT_SHAKE_MAG = CAMERA_SHAKE_MAG * 1.05;
+  const HURT_SHAKE_DURATION = CAMERA_SHAKE_DURATION_MS * 1.1;
+  const DEATH_SHAKE_MULTIPLIER = 1.5;
+
+  const AIR_HURT_KNOCKBACK_SPEED = 3.6;
+  const AIR_HURT_KNOCKBACK_HOLD_MS = 160;
+  const AIR_HURT_KNOCKBACK_DECAY_MS = 220;
+  const AIR_HURT_KNOCKBACK_DOWN_VELOCITY = -5;
+
+  const AIR_DEATH_KNOCKBACK_SPEED = 5.0;
+  const AIR_DEATH_KNOCKBACK_HOLD_MS = 220;
+  const AIR_DEATH_KNOCKBACK_DECAY_MS = 320;
+  const AIR_DEATH_KNOCKBACK_DOWN_VELOCITY = -6.5;
 
   const SLAM_DESCENT_SPEED = -26;
   const SLAM_CAMERA_SHAKE_SCALE = 2.2;
@@ -941,7 +954,30 @@
       landingUntil: 0,
       landingTriggeredAt: 0,
       landingSource: null,
-      pendingSlamLanding: false
+      pendingSlamLanding: false,
+
+      knockback: {
+        active: false,
+        dir: 0,
+        speed: 0,
+        start: 0,
+        holdUntil: 0,
+        end: 0,
+        type: null
+      },
+
+      deathSequence: {
+        active: false,
+        stage: null,
+        fromAir: false,
+        hurtEndAt: 0,
+        deathAnimStartAt: 0,
+        deathAnimEndAt: 0,
+        frame4Shake: false,
+        frame12Shake: false,
+        frame12LandFx: false,
+        lastFrame: -1
+      }
     };
 
     playerActor = Combat.registerActor({
@@ -1348,13 +1384,19 @@
       return snapToPixel(basePosX + worldOffset);
     }
     
-    function spawnLandSmokeFx(now = performance.now()) {
+    function spawnLandSmokeFx(now = performance.now(), opts = {}) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
       const facing = state.facing >= 0 ? 1 : -1;
       const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE);
-      const footY = snapToPixel(basePos.y - feetCenterY());
-      const spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY - 0.1);
+      const anchor = opts.anchor || 'foot';
+      let spawnY;
+      if (anchor === 'waist') {
+        spawnY = snapToPixel(torsoCenterY());
+      } else {
+        const footY = snapToPixel(basePos.y - feetCenterY());
+        spawnY = computeFxCenterYFromFoot(fxLandSmoke, sizeUnits, footY - 0.1);
+      }
       const spawnX = snapToPixel(basePos.x);
       fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
@@ -4078,17 +4120,160 @@
     }
 
     // Hurt + Death
+    function clearKnockback() {
+      state.knockback.active = false;
+      state.knockback.dir = 0;
+      state.knockback.speed = 0;
+      state.knockback.start = 0;
+      state.knockback.holdUntil = 0;
+      state.knockback.end = 0;
+      state.knockback.type = null;
+    }
+
+    function startAirKnockback({ lethal = false } = {}) {
+      const now = performance.now();
+      const dir = state.facing >= 0 ? -1 : 1;
+      const speed = lethal ? AIR_DEATH_KNOCKBACK_SPEED : AIR_HURT_KNOCKBACK_SPEED;
+      const holdMs = lethal ? AIR_DEATH_KNOCKBACK_HOLD_MS : AIR_HURT_KNOCKBACK_HOLD_MS;
+      const decayMs = lethal ? AIR_DEATH_KNOCKBACK_DECAY_MS : AIR_HURT_KNOCKBACK_DECAY_MS;
+      const downVelocity = lethal ? AIR_DEATH_KNOCKBACK_DOWN_VELOCITY : AIR_HURT_KNOCKBACK_DOWN_VELOCITY;
+      state.knockback.active = true;
+      state.knockback.dir = dir;
+      state.knockback.speed = speed;
+      state.knockback.start = now;
+      state.knockback.holdUntil = now + holdMs;
+      state.knockback.end = state.knockback.holdUntil + decayMs;
+      state.knockback.type = lethal ? 'death' : 'hurt';
+      state.vx = dir * speed;
+      if (state.vy > downVelocity) state.vy = downVelocity;
+    }
+
+    function updateKnockback(now = performance.now()) {
+      if (!state.knockback.active) return;
+      if (state.onGround) {
+        clearKnockback();
+        return;
+      }
+      const end = state.knockback.end || 0;
+      if (now >= end) {
+        state.vx = 0;
+        clearKnockback();
+        return;
+      }
+      const holdUntil = state.knockback.holdUntil || 0;
+      if (now <= holdUntil) {
+        state.vx = state.knockback.dir * state.knockback.speed;
+        return;
+      }
+      const decayDuration = Math.max(1, end - holdUntil);
+      const t = clamp((now - holdUntil) / decayDuration, 0, 1);
+      const currentSpeed = state.knockback.speed * (1 - t);
+      state.vx = state.knockback.dir * currentSpeed;
+    }
+
+    function triggerDeathShake() {
+      triggerCameraShake({
+        magnitude: HURT_SHAKE_MAG * DEATH_SHAKE_MULTIPLIER,
+        durationMs: HURT_SHAKE_DURATION * DEATH_SHAKE_MULTIPLIER
+      });
+    }
+
+    function startDeathAnimation(now = performance.now()) {
+      if (!state.deathSequence.active) return;
+      state.deathSequence.stage = 'death';
+      state.deathSequence.deathAnimStartAt = now;
+      if (playerSprite.mgr.death) setAnim('death', false);
+      state.deathSequence.deathAnimEndAt = now + playerSprite.animDurationMs;
+      state.deathSequence.frame4Shake = false;
+      state.deathSequence.frame12Shake = false;
+      state.deathSequence.frame12LandFx = false;
+      state.deathSequence.lastFrame = -1;
+      state.vx = 0;
+      state.vy = 0;
+      clearKnockback();
+      actionEndAt = state.deathSequence.deathAnimEndAt;
+    }
+
+    function beginDeathSequence({ fromAir = false, hurtDuration = 0 } = {}) {
+      disposeAfterimages();
+      state.deathSequence.active = true;
+      state.deathSequence.fromAir = fromAir;
+      state.deathSequence.hurtEndAt = performance.now() + Math.max(0, hurtDuration);
+      state.deathSequence.deathAnimStartAt = 0;
+      state.deathSequence.deathAnimEndAt = 0;
+      state.deathSequence.frame4Shake = false;
+      state.deathSequence.frame12Shake = false;
+      state.deathSequence.frame12LandFx = false;
+      state.deathSequence.lastFrame = -1;
+      state.deathSequence.stage = fromAir ? 'waitLanding' : 'hurt';
+      state.airJumpsRemaining = 1;
+      state.dead = true;
+      state.acting = true;
+      state.flasking = false;
+      if (playerActor) playerActor.alive = false;
+      if (!fromAir) {
+        state.vx = 0;
+        state.vy = 0;
+        clearKnockback();
+      }
+      actionEndAt = 0;
+    }
+
+    function updateDeathSequence(now = performance.now()) {
+      if (!state.deathSequence.active) return;
+      const seq = state.deathSequence;
+      if (seq.stage === 'hurt') {
+        if (now >= seq.hurtEndAt) {
+          startDeathAnimation(now);
+        }
+      } else if (seq.stage === 'waitLanding') {
+        if (state.onGround) {
+          startDeathAnimation(now);
+        }
+      } else if (seq.stage === 'death') {
+        const sp = playerSprite.sprite;
+        if (sp && playerSprite.state === 'death') {
+          const frame = sp.cellIndex ?? 0;
+          if (!seq.frame4Shake && frame >= 3) {
+            triggerDeathShake();
+            seq.frame4Shake = true;
+          }
+          if (!seq.frame12Shake && frame >= 11) {
+            triggerDeathShake();
+            if (!seq.frame12LandFx) {
+              spawnLandSmokeFx(now, { anchor: 'waist' });
+              seq.frame12LandFx = true;
+            }
+            seq.frame12Shake = true;
+          }
+          seq.lastFrame = frame;
+        }
+        if (seq.deathAnimEndAt && now >= seq.deathAnimEndAt) {
+          seq.active = false;
+          seq.stage = 'done';
+        }
+      }
+    }
+
     function triggerHurt(dmg = 15, opts = {}) {
       if (state.dead) return;
-      terminateRollState();
+      const airborne = !state.onGround;
+      terminateRollState({ resetVelocity: !airborne });
       cancelSlam();
       if (opts.event && opts.event.applyDamage === false && !opts.force) return;
       if (state.flasking) cleanupFlaskState({ keepActing: true });
       resetHeavyState({ keepActing: true });
       state.airFlipActive = false;
       state.airFlipUntil = 0;
+      clearKnockback();
       if (!opts.alreadyApplied) setHP(stats.hp - dmg);
-      applyImpactEffects({ hitstopMs: HITSTOP_HURT_MS, shakeMagnitude: CAMERA_SHAKE_MAG * 1.05, shakeDurationMs: CAMERA_SHAKE_DURATION_MS * 1.1 });
+      const lethal = stats.hp <= 0;
+      const shakeScale = lethal ? DEATH_SHAKE_MULTIPLIER : 1;
+      applyImpactEffects({
+        hitstopMs: HITSTOP_HURT_MS,
+        shakeMagnitude: HURT_SHAKE_MAG * shakeScale,
+        shakeDurationMs: HURT_SHAKE_DURATION * shakeScale
+      });
       const suppressFx = fadeEl?.classList?.contains('show');
       if (!suppressFx) {
         const baseSprite = playerSprite.sprite;
@@ -4103,16 +4288,22 @@
         const facing = state.facing >= 0 ? 1 : -1;
         fxHurt.spawn(fxX, fxY, scaleUnits, facing, baseZ, renderGroup);
       }
-      if (stats.hp <= 0) { die(); return; }
       state.flasking = false;
       state.acting = true; combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false;
       combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
       setAnim('hurt', false);
-      actionEndAt = performance.now() + playerSprite.animDurationMs;
+      const hurtDuration = playerSprite.animDurationMs;
+      if (airborne) startAirKnockback({ lethal });
+      if (lethal) {
+        beginDeathSequence({ fromAir: airborne, hurtDuration });
+        return;
+      }
+      actionEndAt = performance.now() + hurtDuration;
     }
     function die() {
       if (state.dead) return;
-      terminateRollState();
+      const airborne = !state.onGround;
+      terminateRollState({ resetVelocity: !airborne });
       cancelSlam();
       disposeAfterimages();
       if (state.flasking) cleanupFlaskState({ keepActing: true });
@@ -4120,10 +4311,31 @@
       state.airFlipActive = false;
       state.airFlipUntil = 0;
       state.airJumpsRemaining = 1;
-      state.dead = true; state.acting = true; state.flasking = false; state.vx = 0; state.vy = 0;
+      clearKnockback();
       combo.nextChain = null; combo.chainSwapQueued = false; combo.chain = null; combo.lastChain = null; combo.lastChainAt = 0; combo.stage = 0; combo.queued = false; combo.pendingHit = false; combo.hitMeta = null; combo.hitAt = 0;
-      setAnim('death', false);
-      actionEndAt = performance.now() + playerSprite.animDurationMs;
+      setHP(0);
+      setAnim('hurt', false);
+      applyImpactEffects({
+        hitstopMs: HITSTOP_HURT_MS,
+        shakeMagnitude: HURT_SHAKE_MAG * DEATH_SHAKE_MULTIPLIER,
+        shakeDurationMs: HURT_SHAKE_DURATION * DEATH_SHAKE_MULTIPLIER
+      });
+      const suppressFx = fadeEl?.classList?.contains('show');
+      if (!suppressFx) {
+        const baseSprite = playerSprite.sprite;
+        const basePos = baseSprite ? baseSprite.position : placeholder.position;
+        const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+        const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+          ? baseSprite.renderingGroupId
+          : null;
+        const scaleUnits = playerSprite.sizeUnits * HURT_FX_SCALE;
+        const fxX = basePos.x;
+        const fxY = torsoCenterY();
+        const facing = state.facing >= 0 ? 1 : -1;
+        fxHurt.spawn(fxX, fxY, scaleUnits, facing, baseZ, renderGroup);
+      }
+      if (airborne) startAirKnockback({ lethal: true });
+      beginDeathSequence({ fromAir: airborne, hurtDuration: playerSprite.animDurationMs });
     }
 
     function startRespawn() {
@@ -4138,6 +4350,17 @@
         state.airJumpsRemaining = 1;
         state.airFlipActive = false;
         state.airFlipUntil = 0;
+        clearKnockback();
+        state.deathSequence.active = false;
+        state.deathSequence.stage = null;
+        state.deathSequence.fromAir = false;
+        state.deathSequence.hurtEndAt = 0;
+        state.deathSequence.deathAnimStartAt = 0;
+        state.deathSequence.deathAnimEndAt = 0;
+        state.deathSequence.frame4Shake = false;
+        state.deathSequence.frame12Shake = false;
+        state.deathSequence.frame12LandFx = false;
+        state.deathSequence.lastFrame = -1;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
         if (playerActor) {
           playerActor.alive = true;
@@ -4280,9 +4503,13 @@
           }
         }
       } else {
-        // damp movement during actions
-        if (state.vx > 0) state.vx = Math.max(0, state.vx - stats.decel * dt);
-        else if (state.vx < 0) state.vx = Math.min(0, state.vx + stats.decel * dt);
+        if (state.knockback.active) {
+          updateKnockback(now);
+        } else {
+          // damp movement during actions
+          if (state.vx > 0) state.vx = Math.max(0, state.vx - stats.decel * dt);
+          else if (state.vx < 0) state.vx = Math.min(0, state.vx + stats.decel * dt);
+        }
       }
 
       // Roll
@@ -4391,7 +4618,10 @@
         state.onGround = false;
       }
       let vyBefore = state.vy;
-      if (!state.dead) {
+      const deathFalling = state.dead && state.deathSequence.active &&
+        (state.deathSequence.stage === 'waitLanding' || state.knockback.active);
+      const allowPhysics = !state.dead || deathFalling;
+      if (allowPhysics) {
         if (!slamming) {
           state.vy += stats.gravity * dt;
           vyBefore = state.vy;
@@ -4415,6 +4645,7 @@
           triggerSlamImpact(now);
         }
         justLanded = !wasOnGround;
+        if (state.knockback.active) clearKnockback();
       } else {
         state.onGround = false;
       }
@@ -4481,6 +4712,8 @@
           state.landingSource = null;
         }
       }
+
+      updateDeathSequence(now);
 
       // Drive sprite from placeholder
       if (playerSprite.sprite) {
