@@ -25,7 +25,7 @@
   const SLAM_AFTERIMAGE_FADE_MS = 180;
   const SLAM_AFTERIMAGE_MAX = 8;
   const SLAM_AFTERIMAGE_ALPHA = 0.4;
-  const SLAM_CAMERA_SHAKE_SCALE = 2.1;
+  const SLAM_CAMERA_SHAKE_SCALE = 2.2;
   const SLAM_HITBOX_DURATION_MS = 180;
   const SLAM_HITBOX_RADIUS_FRAC = 0.55;
 
@@ -904,7 +904,7 @@
     // === STATS ===
     const stats = {
       hpMax: 100, hp: 100,
-      stamMax: 100, stam: 100, stamRegenPerSec: 10,
+      stamMax: 100, stam: 100, stamRegenPerSec: 12,
       walkMax: 2.5, runMax: 4, accel: 12.0, decel: 14.0,
       jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
@@ -1044,7 +1044,7 @@
     const LAND_SMOKE_FX_META = { url: 'assets/sprites/VFX/Land smoke FX.png', frames: 12, fps: 16 };
     const DOUBLE_JUMP_SMOKE_FX_META = { url: 'assets/sprites/VFX/Double jump smoke FX.png', frames: 11, fps: 16 };
     const ROLL_SMOKE_FX_META = { url: 'assets/sprites/VFX/Roll smoke FX.png', frames: 13, fps: 16.6667 };
-    const GROUND_SLAM_FX_META = { url: 'assets/sprites/VFX/Ground slam FX.png', frames: 13, fps: 20 };
+    const GROUND_SLAM_FX_META = { url: 'assets/sprites/VFX/Ground slam FX.png', frames: 9, fps: 20 };
     const SLAM_DEBRIS_FX_META = { url: 'assets/sprites/VFX/Debris FX.png', frames: 9, fps: 20 };
     const healFx = { mgr: null, sprite: null, sizeUnits: 0, animStart: 0, animDuration: 0, frameH: 0 };
     const HEAL_FX_FRONT_OFFSET = 0.01;
@@ -1052,7 +1052,7 @@
     const DOUBLE_JUMP_SMOKE_FX_SCALE = 0.35;
     const ROLL_SMOKE_FX_SCALE = 0.3;
     const GROUND_SLAM_FX_SCALE = 0.4;
-    const SLAM_DEBRIS_FX_SCALE = 0.45;
+    const SLAM_DEBRIS_FX_SCALE = 0.4;
     const LAND_SMOKE_FRAME_MS = 1000 / LAND_SMOKE_FX_META.fps;
     const DOUBLE_JUMP_SMOKE_FRAME_MS = 1000 / DOUBLE_JUMP_SMOKE_FX_META.fps;
     const ROLL_SMOKE_FRAME_MS = 1000 / ROLL_SMOKE_FX_META.fps;
