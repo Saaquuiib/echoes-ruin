@@ -905,7 +905,7 @@
     // === STATS ===
     const stats = {
       hpMax: 100, hp: 100,
-      stamMax: 100, stam: 100, stamRegenPerSec: 12,
+      stamMax: 100, stam: 100, stamRegenPerSec: 15,
       walkMax: 2.5, runMax: 4, accel: 12.0, decel: 14.0,
       jumpVel: 8, gravity: -20,
       coyoteTime: 0.12, inputBuffer: 0.12,
