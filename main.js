@@ -29,7 +29,7 @@
   const AFTERIMAGE_FADE_MS = 180;
   const AFTERIMAGE_MAX = 8;
   const AFTERIMAGE_ALPHA = 0.4;
-  
+
   const ENEMY_FADE_DELAY_MS = 5000;
   const ENEMY_FADE_DURATION_MS = 1000;
 
