@@ -975,6 +975,7 @@
         deathAnimEndAt: 0,
         frame4Shake: false,
         frame12Shake: false,
+        frame12LandFx: false,
         lastFrame: -1
       }
     };
@@ -4179,6 +4180,7 @@
       state.deathSequence.deathAnimEndAt = now + playerSprite.animDurationMs;
       state.deathSequence.frame4Shake = false;
       state.deathSequence.frame12Shake = false;
+      state.deathSequence.frame12LandFx = false;
       state.deathSequence.lastFrame = -1;
       state.vx = 0;
       state.vy = 0;
@@ -4195,6 +4197,7 @@
       state.deathSequence.deathAnimEndAt = 0;
       state.deathSequence.frame4Shake = false;
       state.deathSequence.frame12Shake = false;
+      state.deathSequence.frame12LandFx = false;
       state.deathSequence.lastFrame = -1;
       state.deathSequence.stage = fromAir ? 'waitLanding' : 'hurt';
       state.airJumpsRemaining = 1;
@@ -4231,6 +4234,10 @@
           }
           if (!seq.frame12Shake && frame >= 11) {
             triggerDeathShake();
+            if (!seq.frame12LandFx) {
+              spawnLandSmokeFx(now);
+              seq.frame12LandFx = true;
+            }
             seq.frame12Shake = true;
           }
           seq.lastFrame = frame;
@@ -4307,6 +4314,20 @@
         shakeMagnitude: HURT_SHAKE_MAG * DEATH_SHAKE_MULTIPLIER,
         shakeDurationMs: HURT_SHAKE_DURATION * DEATH_SHAKE_MULTIPLIER
       });
+      const suppressFx = fadeEl?.classList?.contains('show');
+      if (!suppressFx) {
+        const baseSprite = playerSprite.sprite;
+        const basePos = baseSprite ? baseSprite.position : placeholder.position;
+        const baseZ = (basePos && typeof basePos.z === 'number') ? basePos.z : 0;
+        const renderGroup = baseSprite && typeof baseSprite.renderingGroupId === 'number'
+          ? baseSprite.renderingGroupId
+          : null;
+        const scaleUnits = playerSprite.sizeUnits * HURT_FX_SCALE;
+        const fxX = basePos.x;
+        const fxY = torsoCenterY();
+        const facing = state.facing >= 0 ? 1 : -1;
+        fxHurt.spawn(fxX, fxY, scaleUnits, facing, baseZ, renderGroup);
+      }
       if (airborne) startAirKnockback({ lethal: true });
       beginDeathSequence({ fromAir: airborne, hurtDuration: playerSprite.animDurationMs });
     }
@@ -4332,6 +4353,7 @@
         state.deathSequence.deathAnimEndAt = 0;
         state.deathSequence.frame4Shake = false;
         state.deathSequence.frame12Shake = false;
+        state.deathSequence.frame12LandFx = false;
         state.deathSequence.lastFrame = -1;
         setHP(stats.hpMax); setST(stats.stamMax); setFlasks(stats.flaskMax);
         if (playerActor) {
