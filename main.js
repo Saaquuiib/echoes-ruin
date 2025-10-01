@@ -939,7 +939,9 @@
       landing: false,
       landingStartAt: 0,
       landingUntil: 0,
-      landingTriggeredAt: 0
+      landingTriggeredAt: 0,
+      landingSource: null,
+      pendingSlamLanding: false
     };
 
     playerActor = Combat.registerActor({
@@ -1407,6 +1409,7 @@
       state.landingStartAt = 0;
       state.landingUntil = 0;
       state.landingTriggeredAt = 0;
+      state.landingSource = null;
 
       spawnDoubleJumpSmokeFx(now);
 
@@ -1429,12 +1432,13 @@
       }
     }
 
-    function spawnAfterimage(now = performance.now()) {
+    function spawnAfterimage(group, now = performance.now()) {
+      if (!group || !group.afterimages) return;
       const baseSprite = playerSprite.sprite;
       if (!baseSprite) return;
       const manager = baseSprite._manager || baseSprite.manager;
       if (!manager) return;
-      const sprite = new BABYLON.Sprite(`afterimage_${Math.round(now)}_${slam.afterimages.length}`, manager);
+      const sprite = new BABYLON.Sprite(`afterimage_${Math.round(now)}_${group.afterimages.length}`, manager);
       sprite.isPickable = false;
       sprite.size = baseSprite.size;
       sprite.position = baseSprite.position.clone();
@@ -1449,28 +1453,30 @@
         sprite.position.z = baseZ;
       }
       sprite.color = new BABYLON.Color4(1, 1, 1, AFTERIMAGE_ALPHA);
-      slam.afterimages.push({ sprite, start: now, duration: AFTERIMAGE_FADE_MS, baseAlpha: AFTERIMAGE_ALPHA });
-      if (slam.afterimages.length > AFTERIMAGE_MAX) {
-        const removed = slam.afterimages.shift();
+      group.afterimages.push({ sprite, start: now, duration: AFTERIMAGE_FADE_MS, baseAlpha: AFTERIMAGE_ALPHA });
+      if (group.afterimages.length > AFTERIMAGE_MAX) {
+        const removed = group.afterimages.shift();
         if (removed?.sprite && typeof removed.sprite.dispose === 'function') removed.sprite.dispose();
       }
     }
 
-    function updateAfterimages(now = performance.now()) {
+    function updateAfterimageGroup(group, now = performance.now()) {
+      if (!group || !group.afterimages || group.afterimages.length === 0) return;
+      const entries = group.afterimages;
       let i = 0;
-      while (i < slam.afterimages.length) {
-        const entry = slam.afterimages[i];
+      while (i < entries.length) {
+        const entry = entries[i];
         const sprite = entry?.sprite;
         const disposed = sprite && typeof sprite.isDisposed === 'function' ? sprite.isDisposed() : false;
         if (!sprite || disposed) {
           if (sprite && typeof sprite.dispose === 'function') sprite.dispose();
-          slam.afterimages.splice(i, 1);
+          entries.splice(i, 1);
           continue;
         }
         const elapsed = now - entry.start;
         if (elapsed >= entry.duration) {
           sprite.dispose();
-          slam.afterimages.splice(i, 1);
+          entries.splice(i, 1);
           continue;
         }
         const t = Math.max(0, Math.min(1, elapsed / entry.duration));
@@ -1480,13 +1486,24 @@
       }
     }
 
-    function disposeAfterimages() {
-      while (slam.afterimages.length > 0) {
-        const entry = slam.afterimages.pop();
+    function updateAfterimages(now = performance.now()) {
+      updateAfterimageGroup(slam, now);
+      updateAfterimageGroup(rollAfterimage, now);
+    }
+
+    function disposeAfterimageGroup(group) {
+      if (!group || !group.afterimages) return;
+      while (group.afterimages.length > 0) {
+        const entry = group.afterimages.pop();
         if (entry?.sprite && typeof entry.sprite.dispose === 'function') {
           entry.sprite.dispose();
         }
       }
+    }
+
+    function disposeAfterimages() {
+      disposeAfterimageGroup(slam);
+      disposeAfterimageGroup(rollAfterimage);
     }
 
     function cancelSlam() {
@@ -1496,6 +1513,8 @@
       slam.startedAt = 0;
       slam.lastAfterimageAt = 0;
       slam.lastImpactAt = 0;
+      state.pendingSlamLanding = false;
+      state.landingSource = null;
     }
 
     function tryStartSlam(now = performance.now()) {
@@ -1508,6 +1527,8 @@
       slam.startedAt = now;
       slam.lastAfterimageAt = now;
       slam.lastImpactAt = 0;
+      state.pendingSlamLanding = false;
+      state.landingSource = null;
       state.acting = true;
       state.onGround = false;
       state.vx = 0;
@@ -1529,7 +1550,7 @@
       combo.hitAt = 0;
       combo.lastChain = null;
       combo.lastChainAt = now;
-      spawnAfterimage(now);
+      spawnAfterimage(slam, now);
       if (playerSprite.state !== 'fall' && playerSprite.mgr.fall) {
         setAnim('fall', true);
       }
@@ -1542,7 +1563,7 @@
       state.vy = SLAM_DESCENT_SPEED;
       if (now - slam.lastAfterimageAt >= AFTERIMAGE_INTERVAL_MS) {
         slam.lastAfterimageAt = now;
-        spawnAfterimage(now);
+        spawnAfterimage(slam, now);
       }
     }
 
@@ -1571,6 +1592,8 @@
       state.acting = false;
       state.vy = 0;
       state.jumpBufferedAt = 0;
+      state.pendingSlamLanding = true;
+      state.landingSource = 'slam';
       spawnGroundSlamImpactFx(now);
       triggerCameraShake({
         magnitude: CAMERA_SHAKE_MAG * SLAM_CAMERA_SHAKE_SCALE,
@@ -1620,6 +1643,10 @@
       lastAfterimageAt: 0,
       afterimages: [],
       lastImpactAt: 0
+    };
+    const rollAfterimage = {
+      lastAfterimageAt: 0,
+      afterimages: []
     };
     const PLAYER_ATTACKS = {
       light1: {
@@ -3845,6 +3872,7 @@
         state.vx = 0;
         state.vy = 0;
       }
+      rollAfterimage.lastAfterimageAt = 0;
       if (hadInvulnerability && playerActor) {
         Combat.setInvulnerable(playerActor, 'roll', false);
       }
@@ -3880,6 +3908,8 @@
       Combat.setInvulnerable(playerActor, 'roll', false);
       setAnim('roll', true);
       spawnRollSmokeFx(now);
+      rollAfterimage.lastAfterimageAt = now;
+      spawnAfterimage(rollAfterimage, now);
     }
 
     // Combo handling (ground & air)
@@ -4243,6 +4273,7 @@
             state.landingStartAt = 0;
             state.landingUntil = 0;
             state.landingTriggeredAt = 0;
+            state.landingSource = null;
           } else if (canAffordJump && !state.onGround && state.airJumpsRemaining > 0) {
             setST(stats.stam - stats.jumpCost);
             triggerDoubleJump(now);
@@ -4260,6 +4291,10 @@
         state.rollT += dt;
         const rollFacing = (typeof state.rollFacing === 'number') ? state.rollFacing : (state.facing >= 0 ? 1 : -1);
         state.vx = rollFacing * stats.rollSpeed;
+        if (now - rollAfterimage.lastAfterimageAt >= AFTERIMAGE_INTERVAL_MS) {
+          rollAfterimage.lastAfterimageAt = now;
+          spawnAfterimage(rollAfterimage, now);
+        }
         const inWindow = state.rollInvulnDuration > 0 && now >= state.rollInvulnStartAt && now < state.rollInvulnEndAt;
         if (inWindow && !state.rollInvulnApplied) {
           const remaining = Math.max(0, state.rollInvulnEndAt - now);
@@ -4425,19 +4460,25 @@
         const falling = vyBefore < -0.2;
         const jumpBuffered = state.jumpBufferedAt && (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
         const jumpPressedRecently = state.lastJumpPressAt && (now - state.lastJumpPressAt) <= LANDING_SPAM_GRACE_MS;
+        const landedFromSlam = state.pendingSlamLanding;
+        state.pendingSlamLanding = false;
+        const suppressJumpCancel = landedFromSlam;
         const canTriggerLanding = falling && landingMeta && playerSprite.mgr.landing && playerSprite.sprite &&
-        !state.rolling && (!state.acting || state.flasking) && !state.dead && !jumpBuffered && !jumpPressedRecently;
+        !state.rolling && (!state.acting || state.flasking) && !state.dead &&
+        (suppressJumpCancel || (!jumpBuffered && !jumpPressedRecently));
         if (canTriggerLanding) {
           const dur = (landingMeta.frames / landingMeta.fps) * 1000;
           state.landing = true;
           state.landingTriggeredAt = now;
           state.landingStartAt = now + LANDING_MIN_GROUNDED_MS;
           state.landingUntil = state.landingStartAt + dur;
+          state.landingSource = landedFromSlam ? 'slam' : 'fall';
         } else {
           state.landing = false;
           state.landingTriggeredAt = 0;
           state.landingStartAt = 0;
           state.landingUntil = 0;
+          state.landingSource = null;
         }
       }
 
@@ -4488,16 +4529,18 @@
       // Animation state machine (skip while rolling/dead/other actions)
       let landingActive = false;
       if (state.landing) {
-        const jumpBufferedNow = state.jumpBufferedAt &&
-          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000;
-        const jumpPressedAfterLanding = state.lastJumpPressAt > state.landingTriggeredAt;
+        const landingFromSlam = state.landingSource === 'slam';
+        const jumpBufferedNow = landingFromSlam ? false : (state.jumpBufferedAt &&
+          (now - state.jumpBufferedAt) <= stats.inputBuffer * 1000);
+        const jumpPressedAfterLanding = landingFromSlam ? false : state.lastJumpPressAt > state.landingTriggeredAt;
         const eligibleNow = state.onGround && (!state.acting || state.flasking) && !state.dead &&
-          now < state.landingUntil && !jumpBufferedNow && !jumpPressedAfterLanding;
+          now < state.landingUntil && (landingFromSlam || (!jumpBufferedNow && !jumpPressedAfterLanding));
         if (!eligibleNow) {
           state.landing = false;
           state.landingStartAt = 0;
           state.landingUntil = 0;
           state.landingTriggeredAt = 0;
+          state.landingSource = null;
         } else if (now >= state.landingStartAt) {
           landingActive = true;
         }
