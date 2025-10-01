@@ -4590,7 +4590,10 @@
         state.onGround = false;
       }
       let vyBefore = state.vy;
-      if (!state.dead) {
+      const deathFalling = state.dead && state.deathSequence.active &&
+        (state.deathSequence.stage === 'waitLanding' || state.knockback.active);
+      const allowPhysics = !state.dead || deathFalling;
+      if (allowPhysics) {
         if (!slamming) {
           state.vy += stats.gravity * dt;
           vyBefore = state.vy;
