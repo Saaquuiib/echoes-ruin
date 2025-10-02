@@ -1305,6 +1305,13 @@
       frameMs: LAND_SMOKE_FRAME_MS,
       zOffset: FX_LAYER_OFFSET
     });
+    const fxDeathSmoke = createFxPool({
+      name: 'fx_land_smoke',
+      meta: LAND_SMOKE_FX_META,
+      capacity: LAND_SMOKE_FX_POOL_SIZE,
+      frameMs: LAND_SMOKE_FRAME_MS,
+      zOffset: FX_LAYER_OFFSET - 0.1
+    });
     const fxDoubleJumpSmoke = createFxPool({
       name: 'fx_double_jump_smoke',
       meta: DOUBLE_JUMP_SMOKE_FX_META,
@@ -1394,7 +1401,16 @@
       const spawnX = snapToPixel(basePos.x);
       fxLandSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
     }
-
+    function spawnDeathSmokeFx(now = performance.now()) {
+      const { basePos, baseZ, renderGroup } = getPlayerFxContext();
+      if (!basePos) return;
+      const facing = state.facing >= 0 ? -1 : 1;
+      const sizeUnits = Math.max(0.01, playerSprite.sizeUnits * LAND_SMOKE_FX_SCALE * 1.1);
+      const footY = snapToPixel(basePos.y - feetCenterY());
+      const spawnY = computeFxCenterYFromFoot(fxDeathSmoke, sizeUnits, footY - 0.1);
+      const spawnX = snapToPixel(basePos.x - (0.8 * facing));
+      fxDeathSmoke.spawn(spawnX, spawnY, sizeUnits, facing, baseZ, renderGroup, now);
+    }
     function spawnDoubleJumpSmokeFx(now = performance.now()) {
       const { basePos, baseZ, renderGroup } = getPlayerFxContext();
       if (!basePos) return;
@@ -2271,6 +2287,7 @@
       fxHit.init();
       fxHurt.init();
       fxLandSmoke.init();
+      fxDeathSmoke.init();
       fxDoubleJumpSmoke.init();
       fxRollSmoke.init();
       fxGroundSlam.init();
@@ -4235,7 +4252,7 @@
           if (!seq.frame12Shake && frame >= 11) {
             triggerDeathShake();
             if (!seq.frame12LandFx) {
-              spawnLandSmokeFx(now);
+              spawnDeathSmokeFx(now);
               seq.frame12LandFx = true;
             }
             seq.frame12Shake = true;
@@ -4739,6 +4756,7 @@
       fxHit.update(now);
       fxHurt.update(now);
       fxLandSmoke.update(now);
+      fxDeathSmoke.update(now);
       fxDoubleJumpSmoke.update(now);
       fxRollSmoke.update(now);
       fxGroundSlam.update(now);
