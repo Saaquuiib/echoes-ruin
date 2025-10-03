@@ -729,6 +729,151 @@
     // ---- WebAudio ----
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+    const SFX_FILES = {
+      jump: 'assets/sprites/Audio/jump.mp3',
+      landing: 'assets/sprites/Audio/landing.mp3',
+      run: 'assets/sprites/Audio/run.mp3',
+      walk: 'assets/sprites/Audio/walk.mp3',
+      swordswipe1: 'assets/sprites/Audio/swordswipe1.mp3',
+      swordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
+      swordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
+      swordswipe4: 'assets/sprites/Audio/swordswipe4.mp3'
+    };
+
+    const Sfx = (() => {
+      const bufferCache = new Map();
+      const pendingLoads = new Map();
+      const loops = new Map();
+      const loopState = new Map(); // name -> { offset: number, buffer: AudioBuffer | null }
+      const loopPending = new Set();
+
+      function resumeContext() {
+        if (!audioCtx) return;
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => { /* ignored */ });
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        ['pointerdown', 'touchstart', 'keydown'].forEach((evt) => {
+          window.addEventListener(evt, resumeContext, { once: true });
+        });
+      }
+
+      function loadBuffer(name) {
+        if (bufferCache.has(name)) return Promise.resolve(bufferCache.get(name));
+        if (pendingLoads.has(name)) return pendingLoads.get(name);
+        const url = SFX_FILES[name];
+        if (!url) return Promise.resolve(null);
+        const promise = fetch(url)
+          .then((resp) => {
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.arrayBuffer();
+          })
+          .then((data) => audioCtx.decodeAudioData(data))
+          .then((buffer) => {
+            bufferCache.set(name, buffer);
+            pendingLoads.delete(name);
+            return buffer;
+          })
+          .catch((err) => {
+            console.warn('[Audio] Failed to load SFX', name, err);
+            pendingLoads.delete(name);
+            return null;
+          });
+        pendingLoads.set(name, promise);
+        return promise;
+      }
+
+      function playOneShot(name) {
+        loadBuffer(name).then((buffer) => {
+          if (!buffer) return;
+          resumeContext();
+          try {
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioCtx.destination);
+            source.start();
+          } catch (err) {
+            console.warn('[Audio] Failed to play SFX', name, err);
+          }
+        });
+      }
+
+      function startLoop(name) {
+        if (loops.has(name) || loopPending.has(name)) return;
+        loopPending.add(name);
+        loadBuffer(name).then((buffer) => {
+          loopPending.delete(name);
+          if (!buffer) return;
+          if (loops.has(name)) return;
+          resumeContext();
+          try {
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.loop = true;
+            const gain = audioCtx.createGain();
+            source.connect(gain).connect(audioCtx.destination);
+            const state = loopState.get(name) || { offset: 0, buffer: null };
+            const duration = buffer.duration || 0;
+            const startOffset = duration > 0 ? (state.offset % duration) : 0;
+            source.start(0, startOffset);
+            const entry = {
+              source,
+              gain,
+              buffer,
+              startedAt: audioCtx.currentTime,
+              offset: startOffset
+            };
+            loops.set(name, entry);
+            loopState.set(name, { offset: startOffset, buffer });
+          } catch (err) {
+            console.warn('[Audio] Failed to start loop', name, err);
+          }
+        });
+      }
+
+      function stopLoop(name) {
+        if (loopPending.has(name)) loopPending.delete(name);
+        const entry = loops.get(name);
+        if (!entry) return;
+        loops.delete(name);
+        const bufferDuration = entry.buffer?.duration || 0;
+        let offset = entry.offset || 0;
+        if (bufferDuration > 0 && Number.isFinite(bufferDuration)) {
+          const elapsed = Math.max(0, audioCtx.currentTime - (entry.startedAt || audioCtx.currentTime));
+          offset = (offset + (elapsed % bufferDuration)) % bufferDuration;
+        } else {
+          offset = 0;
+        }
+        loopState.set(name, { offset, buffer: entry.buffer || null });
+        try {
+          entry.source.stop();
+        } catch { /* ignored */ }
+        try {
+          entry.source.disconnect();
+        } catch { /* ignored */ }
+        try {
+          entry.gain.disconnect();
+        } catch { /* ignored */ }
+      }
+
+      const LOOP_SFX_BY_ANIM = {
+        run: 'run',
+        walk: 'walk'
+      };
+
+      function onAnimChange(prev, next) {
+        if (prev === next) return;
+        const prevClip = LOOP_SFX_BY_ANIM[prev];
+        const nextClip = LOOP_SFX_BY_ANIM[next];
+        if (prevClip && prevClip !== nextClip) stopLoop(prevClip);
+        if (nextClip) startLoop(nextClip);
+      }
+
+      return { playOneShot, startLoop, stopLoop, onAnimChange };
+    })();
+
     // ===== ORTHOGRAPHIC CAMERA =====
     const camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(0, 2, -8), scene);
     const cameraTarget = new BABYLON.Vector3(0, 1, 0);
@@ -1463,6 +1608,7 @@
       state.landingTriggeredAt = 0;
       state.landingSource = null;
 
+      Sfx.playOneShot('jump');
       spawnDoubleJumpSmokeFx(now);
 
       const doubleJumpMeta = SHEETS.doubleJump;
@@ -1871,6 +2017,7 @@
       const prevSizeUnits = playerSprite.sizeUnits;
       const prevFeetCenter = (prevSizeUnits * 0.5) - playerSprite.baselineUnits;
       const facingLeft = (state.facing < 0);
+      const previousState = playerSprite.state;
       old.dispose();
 
       const sp = new BABYLON.Sprite('playerSprite', mgr);
@@ -1899,6 +2046,8 @@
       } else {
         playerSprite.animDurationMs = shouldPlay ? (meta.frames / meta.fps) * 1000 : 0;
       }
+
+      Sfx.onAnimChange(previousState, name);
 
       if (state.onGround) {
         const newFeetCenter = feetCenterY();
@@ -3999,6 +4148,10 @@
       combo.hitMeta = null;
       combo.hitAt = 0;
       setAnim(name, false);
+      if (chain === 'light') {
+        const swipe = stage === 1 ? 'swordswipe1' : stage === 2 ? 'swordswipe2' : 'swordswipe3';
+        Sfx.playOneShot(swipe);
+      }
       const now = performance.now();
       combo.endAt = now + playerSprite.animDurationMs;
       combo.cancelAt = now + playerSprite.animDurationMs * (meta.cancelFrac ?? 0.6);
@@ -4108,6 +4261,7 @@
       heavy.lastHoldMs = holdMs;
       heavy.lastDamage = heavy.releaseDamage;
       if (playerSprite.mgr.heavy) setAnim('heavy', false);
+      Sfx.playOneShot('swordswipe4');
       const releaseStart = performance.now();
       const animDur = playerSprite.animDurationMs;
       heavy.hitAt = releaseStart + Math.max(0, animDur * HEAVY_HIT_FRAC);
@@ -4508,6 +4662,7 @@
             state.landingUntil = 0;
             state.landingTriggeredAt = 0;
             state.landingSource = null;
+            Sfx.playOneShot('jump');
           } else if (canAffordJump && !state.onGround && state.airJumpsRemaining > 0) {
             setST(stats.stam - stats.jumpCost);
             triggerDoubleJump(now);
@@ -4715,6 +4870,7 @@
           state.landingStartAt = now + LANDING_MIN_GROUNDED_MS;
           state.landingUntil = state.landingStartAt + dur;
           state.landingSource = landedFromSlam ? 'slam' : 'fall';
+          Sfx.playOneShot('landing');
         } else {
           state.landing = false;
           state.landingTriggeredAt = 0;
