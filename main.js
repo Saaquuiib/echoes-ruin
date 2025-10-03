@@ -733,6 +733,7 @@
       jump: 'assets/sprites/Audio/jump.mp3',
       landing: 'assets/sprites/Audio/landing.mp3',
       run: 'assets/sprites/Audio/run.mp3',
+      walk: 'assets/sprites/Audio/walk.mp3',
       swordswipe1: 'assets/sprites/Audio/swordswipe1.mp3',
       swordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
       swordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
@@ -743,6 +744,7 @@
       const bufferCache = new Map();
       const pendingLoads = new Map();
       const loops = new Map();
+      const loopState = new Map(); // name -> { offset: number, buffer: AudioBuffer | null }
       const loopPending = new Set();
 
       function resumeContext() {
@@ -812,8 +814,19 @@
             source.loop = true;
             const gain = audioCtx.createGain();
             source.connect(gain).connect(audioCtx.destination);
-            source.start();
-            loops.set(name, { source, gain });
+            const state = loopState.get(name) || { offset: 0, buffer: null };
+            const duration = buffer.duration || 0;
+            const startOffset = duration > 0 ? (state.offset % duration) : 0;
+            source.start(0, startOffset);
+            const entry = {
+              source,
+              gain,
+              buffer,
+              startedAt: audioCtx.currentTime,
+              offset: startOffset
+            };
+            loops.set(name, entry);
+            loopState.set(name, { offset: startOffset, buffer });
           } catch (err) {
             console.warn('[Audio] Failed to start loop', name, err);
           }
@@ -825,6 +838,15 @@
         const entry = loops.get(name);
         if (!entry) return;
         loops.delete(name);
+        const bufferDuration = entry.buffer?.duration || 0;
+        let offset = entry.offset || 0;
+        if (bufferDuration > 0 && Number.isFinite(bufferDuration)) {
+          const elapsed = Math.max(0, audioCtx.currentTime - (entry.startedAt || audioCtx.currentTime));
+          offset = (offset + (elapsed % bufferDuration)) % bufferDuration;
+        } else {
+          offset = 0;
+        }
+        loopState.set(name, { offset, buffer: entry.buffer || null });
         try {
           entry.source.stop();
         } catch { /* ignored */ }
@@ -836,9 +858,17 @@
         } catch { /* ignored */ }
       }
 
+      const LOOP_SFX_BY_ANIM = {
+        run: 'run',
+        walk: 'walk'
+      };
+
       function onAnimChange(prev, next) {
-        if (prev === 'run' && next !== 'run') stopLoop('run');
-        if (next === 'run' && prev !== 'run') startLoop('run');
+        if (prev === next) return;
+        const prevClip = LOOP_SFX_BY_ANIM[prev];
+        const nextClip = LOOP_SFX_BY_ANIM[next];
+        if (prevClip && prevClip !== nextClip) stopLoop(prevClip);
+        if (nextClip) startLoop(nextClip);
       }
 
       return { playOneShot, startLoop, stopLoop, onAnimChange };
