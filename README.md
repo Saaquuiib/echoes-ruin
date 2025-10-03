@@ -6,9 +6,14 @@
 
 ## 1) High-Concept
 
-**USP / Fantasy.** A tightly-scoped, browser-playable souls-like with readable 2D combat and atmospheric 3D presentation (parallax, lights, post-FX). Mastery is earned by learning strict telegraphs and punish windows.
+**USP / Fantasy.**
+A tightly-scoped, browser-playable souls-like with **precise 2D combat readability** and **atmospheric presentation** powered by Babylon.js (parallax layers, LUT-driven lighting, subtle post-FX). The fantasy is mastery through discipline: players learn to read strict telegraphs and punish windows in a hostile, mysterious world.  
 
-**Inspirations.** Hollow Knight (readability), Dead Cells (input feel), Blasphemous (tone), classic Souls (risk/reward, shrines, optional duel).
+**Inspirations**  
+- Hollow Knight → clarity of combat & animation readability  
+- Dead Cells → replayability, input feel, procedural interior layouts  
+- Blasphemous → tone, environmental storytelling  
+- Classic Souls → shrines, risk/reward, no difficulty toggles 
 
 **Play cadence.**
 
@@ -22,25 +27,32 @@
 
 ## 2) Design Pillars
 
-1. **Readable, lethal combat.**
+1. **Readable, lethal combat**  
+   - All enemy attacks have unique wind-up poses & audio cues.  
+   - Punish windows ≥ 12 frames.  
+   - Never unfair: no off-screen surprise hits.  
+   - On-screen chaos capped (≤1 full-screen FX burst at once).  
 
-   * *Checks:* every attack has a unique pose/sfx; punish windows ≥ 12f; no “surprise” off-screen hits; screen never more than one full-screen burst at once.
+2. **Atmosphere > exposition**  
+   - No cutscenes >8s.  
+   - Lore mostly environmental (~90%).  
+   - Optional lore items expand narrative for players who seek it.  
 
-2. **Atmosphere > exposition.**
+3. **Lean progression**  
+   - ≤3 upgrade lines in v1.  
+   - ≤3 relics in v1.  
+   - No crafting, loot tables, or overcomplexity.  
 
-   * *Checks:* no cutscenes longer than 8 s; 90% lore environmental; optional lore items.
+4. **Cohesive art & sound**  
+   - Palette rules: muted mids + cold highlights.  
+   - Shared outline rules, shading style.  
+   - Unified reverb per biome.  
+   - Single, coherent FX suite (impact rings, dust, flashes).  
 
-3. **Lean progression.**
-
-   * *Checks:* ≤ 3 upgrade lines; ≤ 3 relics in v1; no crafting, no loot tables.
-
-4. **Cohesive art/sound.**
-
-   * *Checks:* palette ties (muted mid-tones + cold highlights), common outline rules, shared reverb, unified hit FX.
-
-5. **Web-first performance.**
-
-   * *Checks:* ≤ 300 draw calls, ≤ 100 active sprites, ≤ 10 particle systems; single texture upload per family.
+5. **Web-first performance**  
+   - ≤300 draw calls, ≤100 active sprites, ≤10 particle systems simultaneously.  
+   - Reuse texture atlases.  
+   - Browser-stable performance monitoring with fallback VFX reductions.
 
 ---
 
@@ -126,47 +138,47 @@
 
 ---
 
-## 5) Biomes & Level Design (Concrete Metrics)
+## 5) Biomes & Level Design (Revised for PCG)
 
-**Global tiles:** 16×16 px.
-**Room spans:** 22–40 tiles wide, 12–22 tiles high.
-**Checkpoint pacing:** every 2–4 rooms; before boss doors.
-**Secrets:** ≤ 1 per biome (breakable wall, false floor, or lever chain).
+**Metrics**
+- Tile size: 16×16 px.
+- Room span: 22–40 tiles wide, 12–22 tall.
+- Procedural interiors: each biome is composed of 5–8 reusable templates (authored), assembled into a valid path per seed.
+- Shrines: **only at biome transitions**. Each biome must be replayed fully after death.
 
-### Lost Glades
+### Lost Glades (Tutorial)
+- 3 compact handcrafted rooms (non-PCG).  
+- Teaches rolls, jumps, spacing against wolves, anti-air vs. bats.  
+- First shrine: unlocks progression systems.
 
-* **Rooms:** 3 compact; 1 shrine.
-* **Teachings:** jump, roll through wolf lunge, spacing prompts once; anti-air bat.
+### Dusk Wood (Act I)
+- Procedural: 6 rooms per run from tagged templates (combat, hazard, elite candidate).  
+- Hazards: collapsing logs, shallow water (20% slow).  
+- Elite: White Wolf Pack-Leader (fixed arena template at end).  
 
-### Dusk Wood
+### Castle Prison (Act IIa)
+- Procedural: ~6 rooms per run.  
+- Puzzle room (timed portcullis) guaranteed once per seed.  
+- Key reward: Crypt Key.  
+- Bat swarms and skeleton patrols seeded differently per run.  
 
-* **Rooms:** 6; 1 shrine mid; 1 wolf-pack arena (3 wolves simultaneously).
-* **Hazards:** collapsing logs (respawn on death), shallow water (slows 20%).
-* **Elite:** **White Wolf** arena: circular glade, 2 destructible trunks.
+### Blood Mansion (Act IIb)
+- 2–3 room templates before boss.  
+- Hazards: chandeliers, turret statues.  
+- Skeleton King arena fixed at endcap.  
 
-### Castle Prison
+### Deadwind Pass (Act IIIa)
+- Procedural: ~5 rooms per run.  
+- Hazards: wind zones (±15% push), narrow ledges.  
+- Oculus Key placed via seeded branch path (platforming challenge or optional arena).  
 
-* **Rooms:** 6; 1 shrine; timed portcullis (5 s window), spike floors, lifts.
-* **Key puzzle:** ring 3 bells (timer resets if you fail) → opens “Jailor” cell → **Crypt Key** drop.
-* **Enemies:** bat clusters (4–5 on ceiling), Skeleton Warriors patrols.
+### Forgotten Cemetery (Act IIIb)
+- 2 room templates (always short for pacing).  
+- Hazards: collapsing graves, cursed fog.  
+- Angel of Death arena fixed at endcap.  
 
-### Blood Mansion
-
-* **Rooms:** 1–2 before boss; drop-able chandeliers (rope cut or projectile trick); rare turret statue (slow bolt).
-* **Boss:** **Skeleton King**.
-
-### Deadwind Pass
-
-* **Rooms:** 5; 1 shrine; wind zones (push ±15% horizontal; jump arcs altered); bone outcrops & narrow ledges.
-* **Enemies:** spectral wolves (blue/purple post-FX), Ghost Warriors, vampire bats.
-* **Oculus Key** tucked on a wind-assisted platforming branch.
-
-### Forgotten Cemetery
-
-* **Rooms:** 2; collapsing graves; sanctified torches (light cones reduce sanity VFX).
-* **Boss:** **Angel of Death**.
-
-**Parallax/lighting per biome** listed in §10.
+**Design impact:**  
+Each biome feels like a self-contained gauntlet. Replayability is driven by procedural interior reshuffling, while authored elite/boss encounters preserve narrative anchors.
 
 ---
 
@@ -242,19 +254,32 @@
 
 ---
 
-## 8) Systems (expanded)
+## 8) Systems (Revised)
 
-**Shrines.** Restores HP, refills flasks, sets respawn; opens **Upgrade** UI (choose 1 line per tier). Fast travel disabled in v1 (placeholder UI greyed).
+**Shrines (Biome Transitions Only)**  
+- Located **only between biomes**, acting as gates.  
+- Functions: heal, refill flasks, checkpoint, upgrade UI.  
+- Trigger fresh PCG seed generation for the next biome.  
+- No mid-biome shrines. Biomes are all-or-nothing challenge chambers.  
 
-**Sanity FX.** Hidden meter (0–100). In cursed zones (Pass/Cemetery) rises +8/s; reduces −15/s in torch cones and at shrines. Only affects VFX intensity and whisper volume.
+**Death & Respawn (Roguelite Model)**  
+- Death resets progress to the last shrine at the **start of the current biome**.  
+- No echoes, no Ash retrieval. Ash is banked automatically.  
+- The biome is regenerated with a new seed after death.  
+- Consequence: tension and replayability per biome attempt.  
 
-**Keys & Gating.**
+**Sanity FX**  
+- Unchanged mechanically, but now resets on shrine respawn.  
+- Still purely audiovisual; ramps in cursed zones, mitigated at shrines/torches.  
 
-* **Crypt Key:** from *Jailor* mini-encounter; opens secret wall (sigil flicker) to Fallen Knight.
-* **Throne Seal:** Skeleton King; opens Deadwind pass gate.
-* **Oculus Key:** optional platforming branch; opens final nave door (if missed, a short arena awards it after clearing).
+**Keys & Gating**  
+- Keys (Crypt, Throne Seal, Oculus) ensure progression remains deterministic despite PCG.  
+- Path validation guarantees placement of key/puzzle rooms before biome exits.  
 
-**Economy.** Ash Fragments autocollect; drop on death as a **memory echo** (retrieve to regain). Only one echo can exist; dying again deletes the old one.
+**Economy**  
+- Ash Fragments remain primary currency.  
+- Always collected automatically.  
+- No echoes dropped on death — simplifies runs, aligns with Dead Cells loop.  
 
 ---
 
@@ -433,27 +458,47 @@
 
 ---
 
-## 16) QA & Telemetry
+## 16) QA & Telemetry (Revised)
 
-**Instrumentation events.** room\_enter, shrine\_rest, enemy\_kill{type}, player\_death{by}, flask\_use, fps\_sample.
+**Events Logged (Updated for PCG & Shrines)**  
+- `room_enter {id, biome, seed}`  
+- `shrine_rest {biome, seed, flask_count, upgrades}`  
+- `biome_seed_start {biome, seed}`  
+- `biome_complete {biome, time, deaths}`  
+- `biome_failed {biome, elapsed_time, death_by}`  
+- `enemy_kill {type}`  
+- `player_death {by, biome}`  
+- `flask_use`  
+- `fps_sample`  
+- `boss_phase_change {boss, phase}`  
+- `boss_defeated {boss, seed}`  
 
-**Acceptance per feature.**
-
-* Roll passes through wolf lunge every time with correct timing.
-* Perfect roll window verified at 120 ms vs. Skeleton thrust.
-* Boss softlocks impossible (adds despawn if stuck off-nav for 5 s).
-* Memory echoes always spawn at death position; retrieve restores Ash.
-
-**Playtest goals.** 80% of deaths attributable to readable mistakes; ≤ 1% deaths from off-screen/unreadable hits.
-
+**Test Goals**  
+- Player respawns always at **biome start shrine**.  
+- New seed generated on respawn; room layouts differ across runs.  
+- Boss/elite endcaps always reachable in generated graphs.  
+- No softlocks: validator guarantees keys & shrines placed in solvable paths.  
+- 80% deaths remain readable; ≤1% caused by unfair procedural overlap.
+  
 ---
 
-## 17) Risks & Mitigations (expanded)
+## 17) Risks & Mitigations (Revised)
 
-* **Art spread across creators.** Use color grading/LUT + outline rules + shared FX to unify.
-* **Browser perf variance.** Offer VFX Intensity slider; auto-reduce bloom on low FPS.
-* **Boss scope creep.** Ship P1 then layer P2/P3; reuse base moves with modifiers.
-* **Collision edge cases (slopes/elevators).** Early slope testbed; avoid concave ledges; generous ledge forgiveness.
+- **Procedural repetition.**  
+  Risk: small template pool feels repetitive.  
+  Mitigation: author 8–10 room templates per biome; tag-based variance (combat, hazard, puzzle).  
+
+- **Unfair procedural layouts.**  
+  Risk: rooms generate unwinnable combos (e.g., too many hazards).  
+  Mitigation: validator enforces biome flow rules (entrance → shrine → boss/elite reachable).  
+
+- **Player disorientation.**  
+  Risk: repeated resets cause fatigue.  
+  Mitigation: biomes short (6–8 rooms max). Subtle cues (ambient FX, fog color) guide progress.  
+
+- **Complex shrine logic removed.**  
+  Risk: no mid-biome checkpoints frustrate some players.  
+  Mitigation: high tension is intended. Game identity aligns with roguelite loop.  
 
 ---
 
@@ -616,175 +661,1034 @@ Open `index.html` via Live Server → toggle overlay → verify FPS & input hint
 
 ---
 
+# Phase 2.5 — Procedural World Foundation: Room Graph & Biome Generator (Days 10–14)
+
+## 🎯 Goals
+- Build the **procedural generation backbone** that powers all biomes.  
+- Support **deterministic seed-based runs** with guaranteed replayability and consistent pacing.  
+- Ensure **biome-level structure**: one entrance, one exit, no mid-biome shrines.  
+- Death always respawns the player at the last **inter-biome shrine**, regenerating the biome with a fresh seed.  
+- Provide robust **debugging and validation tools** to ensure PCG stability.
+
+---
+
+## 🗂️ Scope Overview
+- **Macrostructure:** Acts/biomes remain fixed (Lost Glades → Dusk Wood → Castle Prison → … → Angel).  
+- **Microstructure:** Each biome’s interior is procedurally generated per seed using reusable **room templates**.  
+- **Checkpoints:** Shrines exist only at biome intersections, acting as entry/exit hubs.  
+- **Death flow:** Dying mid-biome respawns at the prior shrine; the biome resets with a new seed.  
+
+This ensures **fresh layouts every run** while preserving narrative flow and difficulty progression.
+
+---
+
+## 📦 Core Deliverables
+- ✅ **RoomTemplate JSON schema** for reusable room definitions.  
+- ✅ **RoomGraph generator** that assembles valid biome layouts per seed.  
+- ✅ **Biome loader** to instantiate room templates into world geometry.  
+- ✅ **Seed manager** for generation, storage, and deterministic replay.  
+- ✅ **Debug UI (F8)**: visualizes seed and graph, allows regen/export.  
+- ✅ **5+ prototype templates for Lost Glades** (combat, traversal, fork, vertical, secret candidate).  
+
+---
+
+## 🛠️ Key Systems to Implement
+
+### 1. RoomTemplate Spec & Data Format
+Define reusable room templates in JSON (example):
+
+{
+"id": "glades_combat_01",
+"biome": "lost_glades",
+"tags": ["combat", "common"],
+"exits": ["east", "west"],
+"enemyBuckets": ["wolves_basic", "bats_basic"],
+"spawnWeight": 1.0,
+"minDepth": 1,
+"maxDepth": 3,
+"hazards": ["pit_small"],
+"secretCandidate": false
+}
+
+- **Tags:** combat, elite_candidate, secret_candidate, boss_arena, fork.  
+- **Exit constraints:** ensures graph connectivity.  
+- **Spawn buckets:** link to biome-specific enemy tables.  
+- **Depth gating:** early rooms easier, deeper rooms harder.  
+
+---
+
+### 2. RoomGraph Generator
+- Creates **biome-level graphs** seeded deterministically.  
+- Guarantees:
+  - Single entrance → single exit.  
+  - At least one elite candidate room.  
+  - Optional secret candidate.  
+- Selects rooms by **tag weighting** to avoid repetition.  
+- Validates paths: no orphaned or unreachable rooms.  
+- Outputs a JSON graph object for the runtime to parse.  
+
+---
+
+### 3. Biome Assembly & Loader
+- Converts RoomGraph → instantiated rooms in engine.  
+- Handles:
+  - Exit/entrance alignment.  
+  - Asynchronous loading between rooms with fade.  
+  - Biome ambience (fog, LUT, ambient audio).  
+- Exit node always links to the **inter-biome shrine**.  
+
+---
+
+### 4. Seed Manager & Persistence
+- Generates new seed at shrine transition or new run.  
+- Stores seeds per-biome in `RunData`.  
+- Manual override for testing.  
+- Deterministic replay: same seed → identical graph/layout/spawns.  
+- Logs seeds to console + telemetry for bug repro.  
+
+---
+
+### 5. Debug & Validation Tools
+**Debug Overlay (F8):**
+- Display: seed, biome name, room count.  
+- Visualize graph: nodes color-coded (combat = grey, elite = red, boss = gold, secret = blue).  
+- Hover: room ID, tags, depth.  
+- Buttons: “Regenerate Seed,” “Export Graph JSON.”  
+
+**Validation Tests:**
+- 50+ seeds per biome: confirm entrance → exit path always exists.  
+- Elite candidate spawns with expected frequency.  
+- Build time <200 ms.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Define `BiomeConfig` for Lost Glades | enemy buckets, fog, props |
+| Author 5+ Lost Glades templates | combat, fork, vertical, secret |
+| Implement `RoomGraph.validate()` | shrine + elite path guaranteed |
+| Hook transitions to PCG graph | hero exits trigger next room load |
+| Add telemetry events | `biome_seed_start`, `biome_failed`, `biome_complete` |
+
+---
+
+## 🧪 Testing
+- **Seed stability:** replay same seed 3× → identical graphs and spawns.  
+- **Graph validity:** 50 random seeds → no unreachable exits.  
+- **Death loop:** die mid-biome → respawn at prior shrine → biome regenerates with new seed.  
+- **Arena validation:** elite candidate always appears once; boss arena reachable in future phases.  
+- **Performance:** seed-to-world build <200 ms, no frame hitches.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Biomes generate procedurally per run with tagged templates.  
+- Seeds are deterministic and replayable.  
+- Death respawns at last inter-biome shrine; biome resets with new seed.  
+- Debug UI shows full seed + graph; supports regeneration and export.  
+- Lost Glades biome playable with at least 5 functional templates.  
+- No console errors; 60 FPS stable.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Expand template libraries to 12–15 per biome.  
+- Add branching/forking path logic.  
+- Introduce rare “corrupted” templates for Aberration system.  
+- Support Daily Seeds and community challenges.  
+- Hook meta-progression into seed history.  
+
+---
+
+# Phase 2.6 — Biome Transition Shrines & Run Reset Logic (Days 13–14)
+
+## 🎯 Goals
+- Finalize the **biome transition system**: shrines act as checkpoints only between biomes.  
+- Remove all mid-biome shrine/echo logic in favor of roguelite-style **run resets**.  
+- Ensure death always returns the player to the last transition shrine, regenerating the biome with a new seed.  
+- Add telemetry/logging for runs, deaths, and biome completions.
+
+---
+
+## 🗂️ Scope Overview
+Shrines no longer appear inside biomes. Instead:  
+- **At biome entry:** shrine serves as a checkpoint, full heal, flask refill, and seed generator for the upcoming biome.  
+- **At biome exit:** shrine locks progress (RunData), regenerates the next biome’s seed, and transitions the player forward.  
+- **On death inside a biome:** player returns to last shrine → full biome is replayed with a **fresh procedural seed**.  
+
+This replaces the old **echo recovery loop** with a simpler, roguelite-friendly **risk/reward loop**.  
+
+---
+
+## 📦 Core Deliverables
+- ✅ Transition Shrine prefab (visual, interaction, FX).  
+- ✅ Biome reset logic on death (regenerate room graph with new seed).  
+- ✅ RunData object to track seeds, relics, flask count, relic inventory.  
+- ✅ Shrine activation FX: heal VFX, audio cue, ambient glow.  
+- ✅ Telemetry events: `biome_seed_start`, `biome_failed`, `biome_complete`, `biome_transition`.  
+
+---
+
+## 🛠️ Key Systems to Implement
+
+### 1. Transition Shrine Prefab
+- **Functions**:  
+  - Heal player to full HP.  
+  - Refill flasks to max.  
+  - Save checkpoint state (RunData).  
+  - Generate new procedural seed for upcoming biome.  
+  - Transition the player to the next biome (via fade + load).  
+- **Visuals**:  
+  - Ambient glow.  
+  - Shrine pulse FX when activated.  
+  - Light flicker/shadow on surrounding tiles.  
+- **Audio**:  
+  - Low hum loop.  
+  - Activation chime.  
+
+### 2. Run Reset Logic
+- **On death inside biome**:  
+  - Respawn at last shrine (biome entrance).  
+  - Full HP/flask reset.  
+  - Current biome is regenerated with a **fresh seed**.  
+- **On completion of biome**:  
+  - Exit shrine transitions to next biome.  
+  - Save relics, flask upgrades, NG+ flags to RunData.  
+
+### 3. RunData Object
+- Stores:  
+  - Current biome name.  
+  - Seeds per biome.  
+  - Relics acquired.  
+  - Flask count.  
+  - Progression flags (keys, seals).  
+- Persists between biomes until run ends.  
+
+### 4. Telemetry Hooks
+- `biome_seed_start {biome, seed}` — logged when new seed begins.  
+- `biome_failed {biome, elapsed_time, death_by}` — logged on death inside biome.  
+- `biome_complete {biome, seed, time}` — logged when exit shrine reached.  
+- `biome_transition {from, to, run_id}` — logged on shrine activation between biomes.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Replace all mid-biome shrine references | Remove old echo/respawn mentions |
+| Add shrine interaction prompt | “Rest at shrine (E)” |
+| Fade transition logic | Smooth fade-out/in on biome swap |
+| Shrine FX prefab | Pulse glow + heal burst |
+| RunData persistence | Stored in memory, optional localStorage for debug |
+| Debug console | Print current biome + seed on shrine activation |
+
+---
+
+## 🧪 Testing
+- **Death loop test:** Die inside Dusk Wood → respawn at Lost Glades shrine → biome regenerates with fresh seed.  
+- **Transition test:** Reach exit shrine → HP/flasks refill → Castle Prison generated.  
+- **Seed test:** Replay same biome multiple times with same seed → identical layout; new seed → fresh layout.  
+- **FX test:** Shrine glow, pulse, heal animation play correctly.  
+- **Telemetry test:** Logs match shrine activations, biome completions, and failures.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Inter-biome shrines functional as the **only checkpoint system**.  
+- Death always returns player to last shrine; biome regenerates with fresh seed.  
+- Shrine interaction heals, refills, and saves state (RunData).  
+- Seeds deterministic + replayable for debugging.  
+- Telemetry events recorded for biome start, failure, completion, and transitions.  
+- Shrine FX + SFX working and visually polished.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Add **upgrade menus** at shrines (future meta-progression).  
+- Introduce NPCs at shrines with branching dialogue.  
+- Daily Seed Mode: shrine shows today’s seed ID.  
+- Multiplayer hooks: seed-sync via shrine activation.  
+
+---
+
 # Phase 3 — Biome Pipeline & Act I (Dusk Wood + White Wolf Elite) (Week 3)
 
-**Goals**
+## 🎯 Goals
+- Establish the **first full procedural biome** (Dusk Wood) using the PCG foundation from Phase 2.5.  
+- Author and validate a **room template library** for Dusk Wood, tagged for combat, traversal, secrets, and elite encounters.  
+- Implement biome-specific **visual identity** (tiles, parallax, LUTs, fog, ambient SFX).  
+- Introduce **wolf variants** (Black Wolf and White Wolf Elite).  
+- Deliver a **complete Act I run** from shrine (Lost Glades exit) → Dusk Wood procedural rooms → White Wolf elite fight → shrine to Castle Prison.
 
-* Turn the pipeline into content: tiles, parallax, fog/LUT; spawn tables; Act I finish with elite fight.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+Dusk Wood is the first true biome in the fixed act order. Its purpose is to:  
+- Teach the player to handle multiple wolf threats (pack coordination).  
+- Showcase procedural room variation for replayability.  
+- Deliver the first “mini-boss” style fight (White Wolf).  
 
-* Tile collisions (slopes 22.5°/45°), one-way platforms; moving platform stub.
-* Parallax stack (BG3→FG), LUT per biome; fog volume; ambient SFX (forest).
-* Spawn tables + connectors; secrets (breakable wall).
-* **Wolf variants** (Black; \~+dmg/speed) and **Pack-Leader (White)** elite:
+All rooms will be generated **procedurally per seed** using authored templates. The flow is always:  
+**Entrance (from shrine) → procedural rooms → White Wolf elite arena → exit shrine → Castle Prison.**
 
-  * Arena setup; P1 bites/swipes; P2 howl summons 2–3 wolves; destructible trunks gimmick; reward: **Howl Fragment** relic.
-* Shrine mid-biome; Ash Fragments award tuned.
+---
 
-**Deliverables**
+## 📦 Core Deliverables
+- ✅ 8+ **Dusk Wood room templates** (combat, traversal, fork, secret candidate, vertical).  
+- ✅ **BiomeConfig** for Dusk Wood (fog LUT, parallax stack, ambient forest SFX, spawn tables).  
+- ✅ **Wolf variants**:  
+  - Black Wolf (stat boost: +dmg/speed).  
+  - White Wolf Pack Leader (elite).  
+- ✅ **Elite arena** template (large clearing with destructible trunks gimmick).  
+- ✅ Reward system: defeating White Wolf drops **Howl Fragment relic**.  
+- ✅ Biome entry/exit shrines (Lost Glades → Dusk Wood → Castle Prison).  
 
-* Dusk Wood: 6 rooms + 1 shrine + wolf-pack room + White Wolf elite fight; transition door to Castle Prison.
+---
 
-**DoD**
+## 🛠️ Key Systems to Implement
 
-* Average room stays < 140 draw calls; < 100 active sprites; 60 FPS stable.
+### 1. Dusk Wood Room Template Library
+- Author 8+ templates for Dusk Wood:  
+  - **Combat rooms**: open clearings, tight choke points.  
+  - **Traversal rooms**: slopes (22.5°/45°), vertical climbs, one-way platforms.  
+  - **Fork rooms**: multiple exits for branching.  
+  - **Secret candidates**: breakable walls revealing loot or shortcuts.  
+  - **Elite arena**: fixed large room for White Wolf fight.  
+- Each template tagged with difficulty tier (`early`, `mid`, `elite`).  
+- Validate exit alignment for seamless PCG chaining.  
 
-**Test script**
+### 2. BiomeConfig (Dusk Wood)
+- **Visuals**:  
+  - Tile set: forest ruins.  
+  - Parallax stack: BG3 → FG layers (trees, mist, ruins).  
+  - LUT: moody green/blue palette.  
+  - Fog: low, drifting ground fog volume.  
+- **Audio**:  
+  - Ambient forest loop (wind, distant howls).  
+  - Layered SFX triggers (creaking trees, wolf howls).  
+- **Spawn tables**:  
+  - Common: Grey Wolf (solo, pairs).  
+  - Uncommon: Bat (ceiling ambush).  
+  - Rare: Black Wolf variant.  
+  - Elite: White Wolf (guaranteed arena).  
 
-* Beat White Wolf; confirm relic drop; confirm gate opens to Castle Prison.
+### 3. Wolf Variants
+- **Black Wolf**:  
+  - Faster run-in speed, slightly harder-hitting.  
+  - Same AI skeleton as Grey Wolf.  
+- **White Wolf (Elite)**:  
+  - **P1:** bite + claw combos.  
+  - **P2 (≤50% HP):** howl → summon 2–3 wolves (pack leader mechanic).  
+  - **Arena gimmick:** destructible trunks (can be broken for tactical positioning).  
+  - **Reward:** Howl Fragment relic (permanent unlock).  
+
+### 4. Inter-Biome Shrines
+- **Entry shrine:** transitions player from Lost Glades into Dusk Wood with new seed.  
+- **Exit shrine:** activates after defeating White Wolf, restoring flasks/HP and generating Castle Prison seed.  
+- No shrines inside Dusk Wood itself.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Implement slope collisions | 22.5° + 45°, plus one-way platforms |
+| Add destructible trunks prefab | Physics + FX when broken |
+| Expand FX pool | Wolf bite/claw impact dust; elite howl aura |
+| Camera tuning | Wide zoom for White Wolf arena |
+| Reward handling | Howl Fragment relic saved to RunData |
+| Biome telemetry | `biome_seed_start`, `biome_failed`, `biome_complete` |
+
+---
+
+## 🧪 Testing
+- **PCG seed tests:** 20 random seeds generate valid Dusk Wood graphs (entrance → elite → exit).  
+- **Wolf variant tests:** Black Wolves spawn at correct rarity; White Wolf always spawns in elite arena.  
+- **Combat feel:** Perfect-roll through wolf lunge still works (from Phase 2 core logic).  
+- **Shrine flow:** Death inside Dusk Wood → respawn at Lost Glades exit shrine → new seed generated.  
+- **Arena test:** Destructible trunks break correctly; White Wolf summons 2–3 wolves in P2.  
+- **Performance:** Room build + transitions <200ms; stable 60 FPS during fights.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Dusk Wood biome fully procedural from entrance shrine to exit shrine.  
+- At least 8 reusable templates tagged and validated for PCG.  
+- Biome visuals (tiles, parallax, fog, LUT, SFX) applied correctly per seed.  
+- Wolf variants functioning; White Wolf elite fight implemented with destructible trunks.  
+- Shrine transitions working: Lost Glades → Dusk Wood → Castle Prison.  
+- Death loop functional: respawn at last shrine, biome regenerates with new seed.  
+- 60 FPS stable, no console errors.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Expand template pool to 12–15 for greater replay variety.  
+- Add unique hazards (falling logs, collapsing bridges).  
+- Introduce rare “aberrant” wolf variants (future Aberration System).  
+- Seed replay mode for testing/“Daily Runs.”  
 
 ---
 
 # Phase 4 — Act II (Castle Prison: Bat Swarms + Skeleton Warriors + Key Puzzle) (Week 4)
 
-**Goals**
+## 🎯 Goals
+- Deliver the **second full procedural biome**: Castle Prison.  
+- Introduce **Bat Swarms** (aerial crowd threat) and **Skeleton Warriors** (sword + axe variants).  
+- Implement a **key-gate puzzle** (3 bells → Jailor room → Crypt Key).  
+- Establish a **branching path structure**: Castle Prison → Blood Mansion OR optional Fallen Knight duel.  
+- Ensure combat and traversal feel tense, claustrophobic, and distinct from Dusk Wood.
 
-* Introduce bats as swarms and Skeleton Warrior (Sword + Axe), plus the key-gate to Fallen Knight.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+Castle Prison marks Act II’s start, introducing **denser enemy encounters** and the game’s first **puzzle mechanic**.  
 
-* Ceiling bat clusters (4–5 per room) with aggro radius; dive cadence tuning (no “shotgun” overlaps).
-* Skeleton Sword: 2–3 hit strings, thrust gap-closer; Axe: cleave + overhead with ground FX; perfect-roll windows strict but fair.
-* **Portcullis puzzle** (3 bells in 5 s) → opens **Jailor** room (Axe variant) → **Crypt Key** drop.
-* Hidden wall (sigil flicker) uses key → door to optional duel (kept locked until key acquired).
-* Performance pass on swarms (culling, pooling).
+- Rooms are procedurally arranged per seed, maintaining an entrance → puzzle/key room → exit → shrine flow.  
+- Bat swarms escalate vertical threat and crowd management.  
+- Skeleton Warriors add melee variety with distinct tells and punish windows.  
+- The puzzle provides narrative and mechanical pacing before opening the way deeper into Act II.
 
-**Deliverables**
+Flow:  
+**Shrine (entry from Dusk Wood) → procedural Castle Prison rooms → Puzzle room (Crypt Key) → Jailor fight → exit shrine → Blood Mansion (and optional Fallen Knight path).**
 
-* Castle Prison: \~6 rooms + shrine + key puzzle + clear difficulty ramp; door to Blood Mansion; hidden entrance to Fallen Knight (locked if no key).
+---
 
-**DoD**
+## 📦 Core Deliverables
+- ✅ 10+ Castle Prison room templates (combat, traversal, fork, puzzle candidate, elite).  
+- ✅ BiomeConfig (tileset: stone walls, LUT: cold/grey, SFX: distant chains, moans, iron clanging).  
+- ✅ Bat Swarm AI: 4–5 bats in clusters, pooled and leashed.  
+- ✅ Skeleton Warrior variants:  
+  - **Sword:** combo-oriented melee, thrust gap-closer.  
+  - **Axe:** cleave + overhead slam, creates ground FX.  
+- ✅ Puzzle system: 3 bell strike in 5s → opens portcullis → Jailor fight → Crypt Key.  
+- ✅ Optional secret door (sigil flicker wall) → Fallen Knight duel path.  
+- ✅ Inter-biome shrine exit: transitions to Blood Mansion.  
 
-* Skeleton tells distinct (hip/shoulder tells); thrust first swing leaves a punish window after a perfect roll; swarms never drop FPS under 55.
+---
 
-**Test script**
+## 🛠️ Key Systems to Implement
 
-* Clear a bat swarm without unseen hits; get key; unlock hidden door; optionally skip it and continue.
+### 1. Castle Prison Room Templates
+- Author 10+ templates:  
+  - **Combat rooms:** narrow corridors, choke points, vertical shafts.  
+  - **Traversal rooms:** platforms with iron grates, ladders, spike pits.  
+  - **Puzzle candidate:** large chamber with 3 bells positioned at different heights.  
+  - **Elite arena:** Jailor fight (Skeleton Axe variant).  
+  - **Secret room candidates:** sigil walls with faint flicker.  
+- Tag templates for PCG selection: combat-heavy, puzzle_required, elite_arena, secret_candidate.
+
+### 2. BiomeConfig
+- **Visuals:**  
+  - Tile set: stone prison blocks, barred cells.  
+  - Parallax stack: BG3 iron gates → BG2 chains → BG1 walls.  
+  - LUT: desaturated cold grey-blue.  
+  - Fog: dense, low-lying mist.  
+- **Audio:**  
+  - Ambient: dripping water, rattling chains.  
+  - Layered SFX: prisoner groans, cell doors slamming in distance.  
+- **Spawns:**  
+  - Common: Bat Swarms, Skeleton Sword.  
+  - Uncommon: Skeleton Axe.  
+  - Elite: Jailor (guaranteed).  
+
+### 3. Bat Swarm AI
+- Clustered group behavior (4–5 bats).  
+- Shared **aggro trigger**: once one bat detects the hero, entire swarm activates.  
+- Dive cadence offset so they don’t “shotgun” simultaneously.  
+- Pooled for performance (reuse instances).  
+- Leash to ceiling anchor (max radius 10–12 tiles).  
+
+### 4. Skeleton Warrior AI
+- **Sword Variant**:  
+  - 2–3 hit light string.  
+  - Thrust gap-closer with punishable recovery.  
+- **Axe Variant**:  
+  - Cleave attack (wide arc).  
+  - Overhead slam (ground impact FX + small stun window).  
+- Shared rules:  
+  - Distinct shoulder/hip tells.  
+  - Strict but fair punish windows.  
+
+### 5. Puzzle System (Crypt Key)
+- Room contains 3 bells in different vertical positions.  
+- Player must strike all 3 within 5s.  
+- Success: portcullis opens → Jailor fight arena.  
+- Jailor (Skeleton Axe elite variant) drops **Crypt Key**.  
+- Key unlocks portcullis to continue deeper into Castle → Blood Mansion.  
+
+### 6. Optional Secret Path
+- Sigil wall flickers faintly when nearby.  
+- Requires Crypt Key to open.  
+- Leads to optional Fallen Knight duel path.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Implement swarm pooling | Bat AI optimized for 4–5 instances at once |
+| Add bell prefab | Trigger collision + visual/audio FX |
+| Portcullis prefab | Opens after bell puzzle success |
+| Jailor boss tuning | Axe variant buffed (HP + dmg) |
+| Sigil wall prefab | Breakable only with Crypt Key |
+| Reward handling | Crypt Key stored in RunData |
+
+---
+
+## 🧪 Testing
+- **PCG seed tests:** 20 seeds → ensure puzzle room always spawns, path valid.  
+- **Bat swarm tests:** swarms aggro together but never dive simultaneously; FPS stable (>55).  
+- **Skeleton test:** sword variant thrust is iframe-punishable; axe slam FX appears on ground.  
+- **Puzzle test:** striking bells within 5s → portcullis opens correctly.  
+- **Secret door test:** sigil wall only opens with Crypt Key.  
+- **Death loop:** dying mid-biome → respawn at shrine (Dusk Wood exit) → fresh Castle Prison seed generated.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Castle Prison generates procedurally per seed with puzzle + elite room guaranteed.  
+- Biome visuals (tileset, LUT, fog, parallax, ambient) applied correctly.  
+- Bat Swarm AI works: clustered aggro, offset dives, pooled for performance.  
+- Skeleton Sword and Axe implemented with distinct tells and punish windows.  
+- Puzzle room functional: 3 bells within 5s opens portcullis → Jailor fight.  
+- Crypt Key drops correctly; unlocks portcullis and optional Fallen Knight path.  
+- Exit shrine transitions to Blood Mansion.  
+- Performance: stable 60 FPS during swarms + puzzle rooms.  
+- No console errors, no softlocks.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Add **skeleton mage variant** (projectile, zoning).  
+- Extend puzzle variety (rotating levers, chained switches).  
+- Introduce rare aberrant bat swarm (larger, corrupted variant).  
+- Add lore tablets in prison cells for environmental storytelling.  
 
 ---
 
 # Phase 5 — Optional Duel & Mid-Boss (Fallen Knight + Blood Mansion + Skeleton King) (Week 5)
 
-**Goals**
+## 🎯 Goals
+- Deliver the **first optional duel boss** (Fallen Knight), branching from Castle Prison.  
+- Build out the **Blood Mansion biome** with unique hazards and traversal quirks.  
+- Implement the **Skeleton King mid-boss fight**, gating Act II’s completion.  
+- Polish the **boss UI** (nameplate, theme layering, music shifts).  
+- Introduce permanent progression rewards via relics and flask upgrades.  
 
-* Ship the optional duel and the Skeleton King boss wall; solidify boss UI and drops.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+This phase combines an optional high-skill duel encounter with a required mid-boss gate:  
 
-* **Fallen Knight**: P1 normal combos; P2 (≤50% hp) “Madness” (−4f recovery, feints). Flask punishable. Drop **Broken Vow** relic (+20 ms perfect-roll grace).
-* **Blood Mansion**: 1–2 rooms, chandelier hazard (rope cut) and one turret statue.
-* **Skeleton King**: P1 cleave/bash/thrust; P2 volley + summon 2 skeletons; chandelier drop stagger (optional gimmick). Drop **Throne Seal** + +1 flask slot.
-* Boss UI polish: nameplate, unique theme layers.
+- The **Fallen Knight** is an optional duel, accessed via the Castle Prison sigil wall. He tests mastery of the core combat systems with aggressive combos.  
+- The **Blood Mansion** is the next PCG biome, smaller but filled with environmental hazards (chandeliers, turret statues).  
+- The **Skeleton King** serves as Act II’s boss wall, fought in a large arena with multi-phase mechanics and summoning patterns.  
 
-**Deliverables**
+Biome progression:  
+**Shrine (Castle Prison exit) → Blood Mansion procedural rooms → Skeleton King arena → exit shrine → Deadwind Pass.**  
+Optional: **Sigil wall → Fallen Knight duel → relic reward → return to Blood Mansion path.**
 
-* Act II complete; gate to Deadwind Pass unlocked.
+---
 
-**DoD**
+## 📦 Core Deliverables
+- ✅ 6–8 Blood Mansion room templates (combat, traversal, chandelier hazard, secret).  
+- ✅ BiomeConfig (Blood Mansion visuals, LUTs, parallax, ambient SFX).  
+- ✅ Fallen Knight duel encounter (optional, Crypt Key gated).  
+- ✅ Skeleton King multi-phase boss fight (mandatory).  
+- ✅ Boss UI (nameplate, music layering).  
+- ✅ Rewards: Broken Vow relic (Fallen Knight), Throne Seal relic + flask upgrade (Skeleton King).  
+- ✅ Shrine transitions: Castle Prison → Blood Mansion → Deadwind Pass.  
 
-* Both arenas reset cleanly on death; no enemy softlocks; boss drops saved.
+---
 
-**Test script**
+## 🛠️ Key Systems to Implement
 
-* Beat Fallen Knight (optional) and Skeleton King; confirm +1 flask, Seal, and relic inventory saved.
+### 1. Blood Mansion Room Templates
+- Author 6–8 templates:  
+  - **Combat rooms:** long corridors, balconies with ambush angles.  
+  - **Traversal:** vertical staircases, trap rooms.  
+  - **Hazards:** chandeliers (rope cut triggers falling object), turret statues firing bolts.  
+  - **Secret candidates:** breakable wall into relic chest.  
+- Tagged for PCG: combat-heavy, hazard, traversal, secret.  
+- Arena exit always leads to Skeleton King fight.  
+
+### 2. BiomeConfig
+- **Visuals:**  
+  - Tile set: gothic architecture, red drapery.  
+  - Parallax: stained glass → chandeliers → grand hall.  
+  - LUT: warm gold + blood red tones.  
+  - Fog: faint smoky haze.  
+- **Audio:**  
+  - Ambient: wind through halls, distant creaks.  
+  - Environmental SFX: chandeliers swaying, statues groaning.  
+- **Spawns:**  
+  - Common: Skeleton Sword.  
+  - Uncommon: Skeleton Axe.  
+  - Rare: Bat swarm (roosting in rafters).  
+  - Elite: Skeleton King (guaranteed arena).  
+
+### 3. Fallen Knight Duel (Optional)
+- **Access:** sigil wall in Castle Prison → opens only with Crypt Key.  
+- **Arena:** tight dueling chamber, no hazards.  
+- **AI Phases:**  
+  - **P1:** standard sword combos (2–3 string), occasional heavy thrust.  
+  - **P2 (≤50% HP):** “Madness” mode: faster recovery, feints, relentless pressure.  
+- **Rules:** flask punishable during fight.  
+- **Reward:** Broken Vow relic (+20ms perfect-roll grace).  
+
+### 4. Skeleton King Boss (Required)
+- **Arena:** large throne room with destructible props.  
+- **AI Phases:**  
+  - **P1:** cleave, bash, thrust.  
+  - **P2 (≤50% HP):** skeleton summons (2 minions), chandelier drop gimmick (player can cut chains).  
+- **Boss UI:**  
+  - Nameplate with HP bar.  
+  - Music layering: choir intensifies in P2.  
+- **Rewards:** Throne Seal relic + +1 flask slot.  
+- **Exit:** shrine spawns after victory → transition to Deadwind Pass.  
+
+### 5. Boss UI & Theme Layering
+- Unique **boss nameplate** overlay with fade-in.  
+- Dynamic music layering (add organ/choir layers on phase change).  
+- Boss intro cut-in (short animation, camera zoom).  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Implement chandelier hazard prefab | Break chain = falls with dust/smash FX |
+| Add turret statue prefab | Fires bolts on player LOS |
+| Skeleton King summon logic | Minions obey leash radius |
+| Music layering system | Boss fight tracks with dynamic layering |
+| Relic inventory handling | Broken Vow & Throne Seal saved to RunData |
+| Shrine FX | Transition shrine after Skeleton King fight |
+
+---
+
+## 🧪 Testing
+- **PCG seed tests:** 20 runs → Blood Mansion always valid, Skeleton King arena reachable.  
+- **Fallen Knight test:** duel accessible only via Crypt Key; P2 triggers at ≤50% HP; relic reward drops reliably.  
+- **Skeleton King test:** chandelier drops work, minion summons functional, choir layer fades in correctly.  
+- **Death loop:** dying in Blood Mansion → respawn at Castle Prison shrine → fresh seed generated.  
+- **Boss loop:** dying to Skeleton King → respawn at Blood Mansion entry shrine → boss arena regenerated.  
+- **Performance:** chandelier and turret hazards never dip FPS below 55.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Blood Mansion biome fully procedural with 6–8 templates.  
+- Fallen Knight duel implemented, optional but rewarding.  
+- Skeleton King multi-phase fight implemented, gating Act II’s completion.  
+- Boss UI and dynamic music layering functional.  
+- Relics (Broken Vow, Throne Seal) saved to RunData.  
+- Exit shrine transitions to Deadwind Pass after Skeleton King victory.  
+- Stable 60 FPS, no console errors.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Add **rare aberrant Skeleton variant** (future Aberration System).  
+- Expand Blood Mansion hazards (falling debris, cursed flames).  
+- Add alternative Fallen Knight dialogue paths (NG+).  
+- Implement cinematic intro cutscenes for bosses.  
 
 ---
 
 # Phase 6 — Act III Part 1 (Deadwind Pass + Spectral Variants + Ghost Warrior 3) (Week 6)
 
-**Goals**
+## 🎯 Goals
+- Deliver the **Deadwind Pass biome**, focused on traversal challenges and spectral enemies.  
+- Introduce new environmental hazard: **wind volumes** that alter jump arcs.  
+- Add **Spectral Wolf** variant and the **Ghost Warrior elite** enemy.  
+- Create a **branching path structure**: Oculus Key branch vs. small arena alternative.  
+- Establish the midpoint of Act III, ramping up difficulty and atmosphere before the Cemetery finale.
 
-* Deliver the hardest traversal, new spectral wolves, Ghost Warriors, wind mechanics, and Oculus Key branch.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+Deadwind Pass is designed as a high-tension traversal biome with supernatural atmosphere.  
 
-* Wind volumes (± push, modifies jump arcs); sanity VFX ramp in this biome.
-* **Spectral wolves**: shader tint + glow; small stat bump; otherwise wolf AI reused.
-* **Ghost Warrior 3**: blink, short/step-in/long multi-hit strings; afterimage FX; counter-windows.
-* Platforming branch to **Oculus Key**; shrine before final zone.
+- The environment itself becomes hostile through **wind volumes** that push/pull the hero mid-air.  
+- **Spectral enemies** escalate familiar threats with buffs and eerie visual effects.  
+- The **Ghost Warrior 3** introduces a new high-skill elite encounter with teleportation and combo strings.  
+- A branching structure ensures replay variety: the hero must acquire the **Oculus Key** via platforming or by winning a combat arena alternative.  
 
-**Deliverables**
+Biome flow:  
+**Shrine (Blood Mansion exit) → Deadwind Pass procedural rooms → Oculus Key branch (platforming or arena) → exit shrine → Forgotten Cemetery.**
 
-* Deadwind Pass playable; exits to Forgotten Cemetery (locked if no key unless arena alternative is cleared).
+---
 
-**DoD**
+## 📦 Core Deliverables
+- ✅ 8–10 Deadwind Pass room templates (platforming, traversal with wind, elite arena, branch path).  
+- ✅ BiomeConfig (Deadwind visuals, LUTs, fog, audio).  
+- ✅ Wind volume system (affects physics/jumps).  
+- ✅ Spectral Wolf variant (buffed Grey Wolf).  
+- ✅ Ghost Warrior elite fight.  
+- ✅ Oculus Key branch logic (platforming challenge OR combat arena alternative).  
+- ✅ Exit shrine → Forgotten Cemetery.  
 
-* Ghost telegraphs (cloak flare, hum) readable; wind doesn’t break jumps; sanity VFX obeys intensity slider.
+---
 
-**Test script**
+## 🛠️ Key Systems to Implement
 
-* Retrieve key via branch; or clear small arena to earn it; proceed to Cemetery.
+### 1. Deadwind Pass Room Templates
+- Author 8–10 templates:  
+  - **Platforming rooms**: high platforms, moving jumps, wind volumes.  
+  - **Traversal rooms**: narrow ledges, collapsing bridges.  
+  - **Elite arena**: Ghost Warrior fight.  
+  - **Branch rooms**: one leading to Oculus Key platforming challenge, one to small arena alternative.  
+- Tag templates for traversal-heavy vs. combat-heavy paths.  
+
+### 2. BiomeConfig
+- **Visuals:**  
+  - Tileset: cliffs, ruins, and broken towers.  
+  - Parallax: storm clouds, ghostly silhouettes, broken bridges.  
+  - LUT: desaturated blue/grey with flickering lightning accents.  
+  - Fog: strong directional mist.  
+- **Audio:**  
+  - Ambient: wind howls, occasional thunder.  
+  - Layered SFX: spectral whispers, distant screams.  
+- **Spawns:**  
+  - Common: Spectral Wolves.  
+  - Rare: Bat swarm (corrupted).  
+  - Elite: Ghost Warrior (guaranteed).  
+
+### 3. Wind Volumes
+- **Mechanics:**  
+  - Invisible zones with directional push (up/down/side).  
+  - Apply constant force to hero mid-air.  
+  - Visual FX: drifting particles show wind direction.  
+- **Tuning:**  
+  - Strong enough to alter trajectory, but not unfair.  
+  - Coyote time + input buffering preserved.  
+
+### 4. Spectral Wolf Variant
+- **Visuals:** shader tint (blue/white glow).  
+- **Stats:** small buff to speed and damage.  
+- **AI:** same skeleton as regular Wolf.  
+- **Audio:** distorted howls, ghostly echo.  
+
+### 5. Ghost Warrior Elite
+- **Arena:** circular platform, wind volumes around edges.  
+- **Moveset:**  
+  - Blink teleport (short/step-in/long).  
+  - Multi-hit sword strings.  
+  - Afterimage FX on blink/attacks.  
+  - Counter windows: readable cloak flare + hum.  
+- **Phases:**  
+  - **P1:** 2–3 hit strings, short blinks.  
+  - **P2 (≤50% HP):** long blinks, 5-hit string, delayed feints.  
+- **Reward:** Oculus Key (if fought in arena path).  
+
+### 6. Oculus Key Branch
+- **Option A (platforming path):**  
+  - Vertical gauntlet of moving platforms + wind volumes.  
+  - Key placed at top platform.  
+- **Option B (arena path):**  
+  - Small combat chamber; defeat Ghost Warrior → drop Oculus Key.  
+- **Logic:** one path always accessible; player choice drives variety.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Implement wind volume prefab | Area zones with directional force + particle FX |
+| Add collapsing bridge prefab | Crumbles after 2–3s of standing |
+| Add spectral wolf shader | Blue tint + glow |
+| Ghost Warrior afterimage FX | Layered alpha silhouettes |
+| Oculus Key prefab | Glowing pickup, saved to RunData |
+| Shrine transition logic | Exit shrine → Forgotten Cemetery |
+
+---
+
+## 🧪 Testing
+- **PCG seed tests:** 20 runs → branch logic always produces valid Oculus Key path.  
+- **Wind test:** volumes alter trajectory fairly; coyote time preserved.  
+- **Spectral wolf test:** spawns correctly, stats buffed.  
+- **Ghost Warrior test:** blinks readable; P2 triggers at ≤50% HP; arena winds don’t break fairness.  
+- **Key logic test:** key always obtainable via platforming OR arena.  
+- **Death loop:** dying mid-biome → respawn at Blood Mansion exit shrine → fresh seed generated.  
+- **Performance:** wind volumes and afterimage FX don’t dip FPS under 55.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Deadwind Pass biome procedural with 8–10 templates, valid branch path guaranteed.  
+- Biome visuals/audio working: storm, fog, whispers.  
+- Wind volumes functional, fair, and readable.  
+- Spectral Wolves working with shader + stat buffs.  
+- Ghost Warrior elite implemented with blink + afterimage moveset.  
+- Oculus Key always obtainable; stored in RunData.  
+- Exit shrine transitions cleanly to Forgotten Cemetery.  
+- Stable 60 FPS, no console errors.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Add **Spectral Bat variant** (splits on death).  
+- Expand wind mechanics (gusts that pulse instead of constant).  
+- Add lore tied to Oculus Key (ritual text, NPC whispers).  
+- Introduce rare aberrant Ghost Warrior (future Aberration System).  
 
 ---
 
 # Phase 7 — Act III Part 2 (Forgotten Cemetery + Final Boss + Endings + Balance Pass 1) (Week 7)
 
-**Goals**
+## 🎯 Goals
+- Deliver the **Forgotten Cemetery biome**, a short but climactic zone leading into the final boss.  
+- Implement the **Angel of Death multi-phase fight** (P1–P3).  
+- Create **ending choice logic** at the final shrine (Absolution vs. Taken).  
+- Add **first NG+ flagging system** to enable future replayability scaling.  
+- Conduct a **first global balance pass** (enemy stats, flask timings, roll windows, music mix).
 
-* Build the finale (Angel of Death P1–P3), endings, basic NG+ flagging, and a first global balance pass.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+The Forgotten Cemetery is the final atmospheric run before the endgame. It serves as the **player’s last trial**: eerie traversal, lingering spectral enemies, and the ominous Angel Arena at the end.  
 
-* **Angel of Death**:
+- **Biome:** short, high-tension PCG zone (4–6 templates).  
+- **Angel of Death:** three distinct boss phases, escalating visually and mechanically.  
+- **Endings:** shrine prompt before the arena offers choice (Absolution vs. Taken).  
+- **NG+ system:** flags set at ending, carrying progression forward.  
+- **Balance pass:** tighten combat timings, adjust enemy stats, and complete first audio mix.  
 
-  * P1: sweep + feather fan + short blink.
-  * P2: dive reap + Ring of Wails; wind amplified.
-  * P3: Black Halo blades + long teleports with afterimage feints + 8-dir bolts.
-  * Parry only on grounded reaps; punish windows per GDD.
-* Ending choice UI at shrine (Absolution vs Taken); set NG+ flag to true (affects later runs).
-* Balance pass: enemy hp/dmg, perfect-roll windows verify (120 ms), flask sip timings; first audio mix pass (ducking, organ/choir levels).
+Biome flow:  
+**Shrine (Deadwind Pass exit) → Forgotten Cemetery procedural rooms → Ending shrine → Angel of Death Arena → Credits + NG+ toggle.**
 
-**Deliverables**
+---
 
-* Full playthrough end to end; credits stub; NG+ flag displayed on title if set.
+## 📦 Core Deliverables
+- ✅ 4–6 Forgotten Cemetery room templates (combat, traversal, tomb hazards).  
+- ✅ BiomeConfig (Cemetery visuals, LUTs, fog, ambient audio).  
+- ✅ Angel of Death boss fight with 3 escalating phases.  
+- ✅ Ending choice shrine logic (Absolution vs. Taken).  
+- ✅ NG+ flagging system in RunData.  
+- ✅ First balance pass (stats, timings, mix).  
 
-**DoD**
+---
 
-* No crashes on retry; boss phases switch reliably; music layers swap at ≤50% HP.
+## 🛠️ Key Systems to Implement
 
-**Test script**
+### 1. Cemetery Room Templates
+- Author 4–6 templates:  
+  - **Combat rooms:** skeletal ambushes, spectral variants.  
+  - **Traversal rooms:** crumbling mausoleums, uneven gravestones.  
+  - **Hazards:** collapsing crypt tiles, bone spikes.  
+- Small biome; PCG ensures variation without extending length unfairly.  
+- Exit always routes to Angel Arena.  
 
-* Beat Angel; view both endings via re-fight; verify NG+ toggle.
+### 2. BiomeConfig
+- **Visuals:**  
+  - Tileset: broken graves, cracked statues.  
+  - Parallax: fog layers, silhouettes of monuments.  
+  - LUT: green-grey desaturation, heavy vignette.  
+  - Fog: thick rolling mist.  
+- **Audio:**  
+  - Ambient: distant church bells, faint chants.  
+  - Random SFX: rattling bones, whispers.  
+- **Spawns:**  
+  - Common: Skeleton Sword/Axe.  
+  - Rare: Spectral Wolves.  
+  - Elite: none (focus shifts to boss).  
+
+### 3. Angel of Death Boss
+- **Arena:** vast graveyard plateau with shifting fog.  
+- **Phases:**  
+  - **P1 (100–66% HP):** scythe sweeps, feather fan projectiles, short blink teleports.  
+  - **P2 (65–33% HP):** dive reap, Ring of Wails (AOE pulse), wind intensifies.  
+  - **P3 (≤33% HP):** Black Halo blades (circular summons), long blinks with afterimage feints, 8-direction bolt attacks.  
+- **Telegraphs:** cloak flares, wing beats, audio cues.  
+- **Counter windows:** only grounded reaps punishable.  
+- **FX:** phase shifts with escalating choir/organ layers.  
+- **Rewards:** triggers ending cutscene; no relic drop (finale).  
+
+### 4. Ending Choice Shrine
+- Located just before Angel Arena.  
+- Offers player a choice:  
+  - **Absolution:** “clean” ending path.  
+  - **Taken:** darker ending path.  
+- Choice logged in RunData for NG+.  
+
+### 5. NG+ System
+- At ending: set NG+ flag in RunData = true.  
+- On next run: enemies scale (HP, dmg), altered seed modifiers available.  
+- Title screen displays NG+ indicator.  
+
+### 6. Balance Pass 1
+- Review enemy stats across all biomes.  
+- Tighten flask sip timings (cancel windows).  
+- Verify perfect-roll window = 120 ms.  
+- Adjust boss punish windows for fairness.  
+- Mix pass:  
+  - Duck SFX during music climaxes.  
+  - Angel fight adds organ/choir layers on P2/P3.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Add collapsing crypt prefab | Breaks after brief stand |
+| Add bone spike prefab | Pops up on trigger |
+| Boss UI expansion | Angel’s unique nameplate + wing motif |
+| Ending shrine FX | Bright vs. dark aura depending on choice |
+| RunData save hook | NG+ flag, ending choice |
+| Credits stub | Auto-roll after ending cutscene |
+
+---
+
+## 🧪 Testing
+- **PCG seed tests:** 10 runs → Cemetery always valid, 4–6 rooms before arena.  
+- **Boss test:** Angel phase shifts trigger at correct HP thresholds; telegraphs readable; choir/organ layers add properly.  
+- **Ending test:** shrine choice records correctly; cutscenes trigger as expected.  
+- **NG+ test:** after ending, title screen shows NG+ flag; enemies buffed on next run.  
+- **Balance test:** perfect-roll window consistent at 120 ms; flask cancel window functional.  
+- **Performance:** Angel arena stable 60 FPS even during P3 with FX density.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Forgotten Cemetery biome implemented with 4–6 procedural templates.  
+- Angel of Death boss fight complete with 3 escalating phases.  
+- Ending shrine choice functional; Absolution vs. Taken logged in RunData.  
+- NG+ flagging system works; title shows NG+ after first completion.  
+- Balance pass applied across combat engine, flask timings, roll windows.  
+- Boss UI polished, music layering works, FX stable.  
+- Stable 60 FPS, no console errors, no softlocks.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Expand Cemetery templates to 8–10 for NG+ variety.  
+- Add rare aberrant spawns (future Aberration System).  
+- Alternate endings for NG++ runs.  
+- Cinematic intro for Angel fight with environmental destruction.  
 
 ---
 
 # Phase 8 — Polish, Accessibility, Optimization, Release Candidate (Week 8)
 
-**Goals**
+## 🎯 Goals
+- Deliver a stable **Release Candidate build** of the game.  
+- Polish combat feel, inputs, FX, and performance across all biomes.  
+- Implement **accessibility features** (visual/auditory toggles, color-blind palettes, remap polish).  
+- Optimize assets and runtime to ensure **stable 60 FPS** across mid-range hardware.  
+- Conduct final QA passes with checklists, telemetry validation, and balance tuning.  
+- Prepare for deployment as a static web build.  
 
-* Hit perf, tighten input feel, finalize post-FX, accessibility, SFX/music mix, and a stable **static** web build.
+---
 
-**Tasks**
+## 🗂️ Scope Overview
+This phase is about turning a functional v1 into a **shippable product**.  
 
-* Perf: texture trimming/atlases, sprite pooling, cull rules, throttle particles under 55 FPS; optimize PNGs (oxipng/zopfli); audio to OGG @ 160 kbps VBR.
-* Post-FX tuning per biome (LUTs, bloom on stained glass only; sanity vignette pulse).
-* Accessibility: flashes off/min/normal; shake off/low/normal; color-blind palettes; subtitles; remap UI polish.
-* QA: run **encounter checklists** (below); fix fatal issues; save schema versioning; localStorage reset tool.
-* **Deploy static site** via GitHub Pages / Netlify / Cloudflare Pages.
-* Add `credits.html` + favicon.
+- **Polish:** finalize animations, combat transitions, post-processing, and encounter tuning.  
+- **Accessibility:** add player-facing options for flashes, shake, color palettes, and audio readability.  
+- **Optimization:** texture compression, sprite pooling, particle throttling.  
+- **Release Candidate:** GitHub Pages / Netlify / Cloudflare deployment with credits, favicon, and a QA-ready build.  
 
-**Deliverables**
+---
 
-* **v1 Release Candidate** URL; internal patch notes; “How to test” guide for you.
+## 📦 Core Deliverables
+- ✅ Global polish pass (combat, animations, transitions, post-FX).  
+- ✅ Accessibility settings (flashes, shake, palettes, subtitles, remaps).  
+- ✅ Optimized assets (textures, sprites, audio).  
+- ✅ QA checklist completion across all biomes and bosses.  
+- ✅ Telemetry validation for all run events.  
+- ✅ Static build deployment + credits.  
 
-**DoD**
+---
 
-* 60 FPS on mid-range laptop in all rooms; no blockers; telemetry events logging; licenses present.
+## 🛠️ Key Systems to Implement
 
-**Test script**
+### 1. Combat & Input Polish
+- Refine combat transitions (attack → roll → recovery) for flow.  
+- Finalize animation timings across enemies to remove stutter/jank.  
+- Add subtle hitstop tuning for light/heavy hits.  
+- Adjust stamina regen curve for fairness.  
+- Confirm dodge i-frames align with animation windows.  
 
-* Full clean run, fresh browser profile; report perf dips, readability issues, or unfair hits.
+### 2. Post-Processing & FX Tuning
+- Biome-specific LUTs finalized (forest green, prison grey-blue, mansion red-gold, pass storm-grey, cemetery desaturated).  
+- Bloom reserved for stained glass / magical FX (avoid overuse).  
+- Sanity vignette tuned to pulse intensity without obstructing readability.  
+- White flash shader intensity capped at accessibility-friendly levels.  
+
+### 3. Accessibility Options
+- **Flashes:** toggle Off / Minimal / Normal.  
+- **Screen shake:** toggle Off / Low / Normal.  
+- **Color-blind palettes:** protanopia, deuteranopia, tritanopia.  
+- **Subtitles:** on by default for all story/NPC dialogue.  
+- **Remap UI:** polish placeholder bindings into full rebinding screen.  
+
+### 4. Optimization Pipeline
+- **Textures:** atlas trimming, oxipng/zopfli compression.  
+- **Sprites:** pooled and reused (FX, enemies, props).  
+- **Particles:** throttle under 55 FPS (auto-despawn extras).  
+- **Audio:** convert to OGG 160 kbps VBR.  
+- **Runtime:** clamp frame delta (≤1/30s) to prevent physics spikes.  
+
+### 5. QA & Telemetry
+- Run encounter checklist across all biomes (wolves, bats, skeletons, Ghost Warrior, Angel).  
+- Confirm all shrines work as inter-biome transitions.  
+- Telemetry events validated:  
+  - `biome_seed_start`  
+  - `biome_failed`  
+  - `biome_complete`  
+  - `biome_transition`  
+  - `boss_start/phase_change/death`  
+- Verify relics, keys, and NG+ flags persist properly.  
+- NG+ scaling tested (enemy buffs applied).  
+
+### 6. Deployment
+- Prepare final static build via GitHub Pages / Netlify / Cloudflare Pages.  
+- Add `credits.html` (contributors, tools, asset licenses).  
+- Add favicon + metadata.  
+- Internal patch notes + “How to Test” guide for QA.  
+
+---
+
+## 📋 Supporting Tasks
+| Task | Notes |
+|------|-------|
+| Final relic inventory screen | Show collected relics post-run |
+| Audio mix pass | Balance SFX/music ducking, boss choir layering |
+| Credits stub | List all libraries, tools, inspirations |
+| LocalStorage reset tool | QA can clear save easily |
+| Performance monitor | FPS + draw call overlay in debug |
+
+---
+
+## 🧪 Testing
+- **Perf test:** Stress-test biomes with swarms + FX → FPS ≥ 55.  
+- **Accessibility test:** Toggle flashes, shake, palettes → settings apply immediately.  
+- **Combat test:** Combo → roll → heavy → roll cancel → feels snappy, no jank.  
+- **Boss test:** All bosses reset cleanly on death, no softlocks.  
+- **NG+ test:** Complete run, restart → NG+ active, buffs applied.  
+- **Deployment test:** Open build in fresh browser profile → no errors, stable FPS.  
+
+---
+
+## ✅ Definition of Done (DoD)
+- Combat flow smooth, no stutters or animation jitters.  
+- All accessibility settings functional and player-facing.  
+- Textures/audio optimized, FPS stable at 60 in normal play.  
+- Telemetry logs all major events accurately.  
+- QA checklist complete across all biomes/bosses.  
+- Release Candidate deployed, credits page live.  
+- No console errors, no critical bugs.  
+
+---
+
+## 🔮 Long-Term Extensions
+- Add meta-progression hub (shrines offering permanent upgrades).  
+- Daily Seed mode with leaderboard.  
+- Speedrun timer overlay.  
+- Expanded accessibility suite (font scaling, audio EQ).  
+- Console/browser porting optimizations.  
 
 ---
 
