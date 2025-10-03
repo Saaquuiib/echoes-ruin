@@ -737,7 +737,8 @@
       swordswipe1: 'assets/sprites/Audio/swordswipe1.mp3',
       swordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
       swordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
-      swordswipe4: 'assets/sprites/Audio/swordswipe4.mp3'
+      swordswipe4: 'assets/sprites/Audio/swordswipe4.mp3',
+      groundslam: 'assets/sprites/Audio/groundslam.mp3'
     };
 
     const Sfx = (() => {
@@ -1793,6 +1794,7 @@
       state.pendingSlamLanding = true;
       state.landingSource = 'slam';
       spawnGroundSlamImpactFx(now);
+      Sfx.playOneShot('groundslam');
       triggerCameraShake({
         magnitude: CAMERA_SHAKE_MAG * SLAM_CAMERA_SHAKE_SCALE,
         durationMs: CAMERA_SHAKE_DURATION_MS * SLAM_CAMERA_SHAKE_SCALE
