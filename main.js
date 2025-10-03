@@ -730,6 +730,7 @@
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     const SFX_FILES = {
+      // player
       jump: 'assets/sprites/Audio/jump.mp3',
       landing: 'assets/sprites/Audio/landing.mp3',
       run: 'assets/sprites/Audio/run.mp3',
@@ -739,7 +740,14 @@
       swordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
       swordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
       swordswipe4: 'assets/sprites/Audio/swordswipe4.mp3',
-      groundslam: 'assets/sprites/Audio/groundslam.mp3'
+      airswordswipe1: 'assets/sprites/Audio/swordswipe1.mp3',
+      airswordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
+      airswordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
+      groundslam: 'assets/sprites/Audio/groundslam.mp3',
+
+      // wolf
+      bite: 'assets/sprites/Audio/wolfbite.mp3',
+      claw: 'assets/sprites/Audio/wolfclaw.mp3'
     };
 
     const Sfx = (() => {
@@ -2512,7 +2520,7 @@
       }
 
       function wolfSelectMeleeAttack() {
-        return Math.random() < 0.75 ? 'bite' : 'claw';
+        return Math.random() < 0.80 ? 'bite' : 'claw';
       }
 
       const WOLF_ATTACK_DATA = {
