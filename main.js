@@ -2526,6 +2526,7 @@
       const WOLF_ATTACK_DATA = {
         bite: {
           anim: 'bite',
+          sfx: 'bite',
           hitFrac: 0.6,
           durationMs: 190,
           damage: 12,
@@ -2542,6 +2543,7 @@
         },
         claw: {
           anim: 'claw',
+          sfx: 'claw',
           hitFrac: 0.62,
           durationMs: 200,
           damage: 15,
@@ -2795,6 +2797,9 @@
           e.state = 'attack';
           if (def.anim && e.mgr[def.anim]) {
             setEnemyAnim(e, def.anim);
+          }
+          if (def.sfx) {
+            Sfx.playOneShot(def.sfx);
           }
           const animStart = e.animStart || now;
           const animDur = e.animDur || 0;
@@ -4162,6 +4167,9 @@
       setAnim(name, false);
       if (chain === 'light') {
         const swipe = stage === 1 ? 'swordswipe1' : stage === 2 ? 'swordswipe2' : 'swordswipe3';
+        Sfx.playOneShot(swipe);
+      } else if (chain === 'air') {
+        const swipe = stage === 1 ? 'airswordswipe1' : stage === 2 ? 'airswordswipe2' : 'airswordswipe3';
         Sfx.playOneShot(swipe);
       }
       const now = performance.now();
