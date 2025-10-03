@@ -4112,6 +4112,7 @@
       state.rollInvulnApplied = false;
       Combat.setInvulnerable(playerActor, 'roll', false);
       setAnim('roll', true);
+      Sfx.playOneShot('roll');
       spawnRollSmokeFx(now);
       rollAfterimage.lastAfterimageAt = now;
       spawnAfterimage(rollAfterimage, now);
