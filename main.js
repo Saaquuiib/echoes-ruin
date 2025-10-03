@@ -734,6 +734,7 @@
       landing: 'assets/sprites/Audio/landing.mp3',
       run: 'assets/sprites/Audio/run.mp3',
       walk: 'assets/sprites/Audio/walk.mp3',
+      roll: 'assets/sprites/Audio/roll.mp3',
       swordswipe1: 'assets/sprites/Audio/swordswipe1.mp3',
       swordswipe2: 'assets/sprites/Audio/swordswipe2.mp3',
       swordswipe3: 'assets/sprites/Audio/swordswipe3.mp3',
